@@ -1,0 +1,44 @@
+name: bench
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: ""
+
+jobs:
+  bench:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [simulation, walltime]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-codspeed
+      - run: just bench-build ${{ matrix.mode }}
+      - uses: CodSpeedHQ/action@v5
+        with:
+          mode: ${{ matrix.mode }}
+          run: just bench-run ${{ matrix.mode }}

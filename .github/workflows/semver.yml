@@ -1,0 +1,33 @@
+name: semver
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semver-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  semver:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-semver-checks
+      - name: check the public interface against the PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_TYPE: ${{ contains(github.event.pull_request.labels.*.name, 'semver-major') && 'major' || 'minor' }}
+        run: just semver-check "$BASE_SHA" "$RELEASE_TYPE"

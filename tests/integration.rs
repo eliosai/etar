@@ -1,6 +1,6 @@
-//! Integration: tara packed/opened against object_store, GNU tar, and mkfs.erofs
+//! Archive interoperability with object_store, GNU tar, and mkfs.erofs
 
-use futures::StreamExt;
+use etar::{EntryPath, Format, Kind, Meta, ReadEntry, ReadLimits, Reader, WriteEntry, Writer};
 use object_store::buffered::{BufReader, BufWriter};
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
@@ -8,113 +8,111 @@ use object_store::{ObjectStore, ObjectStoreExt};
 use std::io::Cursor;
 use std::process::Command;
 use std::sync::Arc;
-use tara::{Kind, Meta, OpenEntry, PackEntry, SafePath, SecurityLimits, open, pack_to_sink};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 
-fn sample() -> Vec<PackEntry<Cursor<Vec<u8>>>> {
-    vec![
-        file("etc/hosts", b"127.0.0.1 localhost"),
-        dir("usr"),
-        file("usr/bin/app", b"\x7fELF binary-ish payload"),
-        symlink("usr/bin/python", "/usr/bin/python3"),
-    ]
-}
-
-fn file(path: &str, body: &[u8]) -> PackEntry<Cursor<Vec<u8>>> {
-    PackEntry {
-        path: SafePath::new(path).unwrap(),
-        meta: Meta::new(0o644, 0, 0, 0, Kind::File),
-        size: body.len() as u64,
-        body: Some(Cursor::new(body.to_vec())),
-    }
-}
-
-fn dir(path: &str) -> PackEntry<Cursor<Vec<u8>>> {
-    PackEntry {
-        path: SafePath::new(path).unwrap(),
-        meta: Meta::new(0o755, 0, 0, 0, Kind::Dir),
-        size: 0,
-        body: None,
-    }
-}
-
-fn symlink(path: &str, target: &str) -> PackEntry<Cursor<Vec<u8>>> {
+async fn append_sample<W>(writer: &mut Writer<W>)
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let path = EntryPath::new("etc/hosts").expect("path");
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+    writer
+        .append(
+            WriteEntry::file(path, meta, 19, Cursor::new(b"127.0.0.1 localhost".to_vec()))
+                .expect("file"),
+        )
+        .await
+        .expect("append file");
+    let path = EntryPath::new("usr").expect("path");
+    let meta = Meta::new(0o755, 0, 0, 0, Kind::Dir);
+    writer
+        .append(WriteEntry::metadata(path, meta).expect("directory"))
+        .await
+        .expect("append directory");
+    let path = EntryPath::new("usr/bin/app").expect("path");
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+    let body = b"\x7fELF binary-ish payload";
+    writer
+        .append(
+            WriteEntry::file(path, meta, body.len() as u64, Cursor::new(body.to_vec()))
+                .expect("file"),
+        )
+        .await
+        .expect("append file");
+    let path = EntryPath::new("usr/bin/python").expect("path");
     let kind = Kind::Symlink {
-        target: target.into(),
+        target: "/usr/bin/python3".into(),
     };
-    PackEntry {
-        path: SafePath::new(path).unwrap(),
-        meta: Meta::new(0o777, 0, 0, 0, kind),
-        size: 0,
-        body: None,
-    }
+    let meta = Meta::new(0o777, 0, 0, 0, kind);
+    writer
+        .append(WriteEntry::metadata(path, meta).expect("symlink"))
+        .await
+        .expect("append symlink");
 }
 
 async fn pack_sample() -> Vec<u8> {
-    let stream = futures::stream::iter(sample().into_iter().map(Ok));
-    pack_to_sink(stream, Vec::new()).await.unwrap()
+    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    append_sample(&mut writer).await;
+    writer.finish().await.expect("finish").sink
 }
 
-async fn read_entry(mut entry: OpenEntry) -> (String, Kind, Vec<u8>) {
-    let path = entry.path.as_path().to_string_lossy().into_owned();
-    let kind = entry.meta.kind.clone();
+async fn read_entry(mut entry: ReadEntry<'_>) -> (String, Kind, Vec<u8>) {
+    let path = entry.header().path.as_path().to_string_lossy().into_owned();
+    let kind = entry.header().meta.kind.clone();
     let mut body = Vec::new();
-    entry.read_to_end(&mut body).await.unwrap();
+    entry.read_to_end(&mut body).await.expect("body");
     (path, kind, body)
 }
 
 #[tokio::test]
-async fn test_object_store_round_trip() {
+async fn object_store_round_trip() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let path = ObjectPath::from("exports/fs.tar");
+    let sink = BufWriter::new(store.clone(), path.clone());
+    let mut writer = Writer::new(sink, Format::Tar);
+    append_sample(&mut writer).await;
+    writer.finish().await.expect("finish");
 
-    let writer = BufWriter::new(store.clone(), path.clone());
-    let stream = futures::stream::iter(sample().into_iter().map(Ok));
-    pack_to_sink(stream, writer).await.unwrap();
-
-    let meta = store.head(&path).await.unwrap();
-    let reader = BufReader::new(store.clone(), &meta);
-    let opened = open(reader, SecurityLimits::default());
-    futures::pin_mut!(opened);
+    let meta = store.head(&path).await.expect("head");
+    let source = BufReader::new(store.clone(), &meta);
+    let mut reader = Reader::open(source, ReadLimits::default())
+        .await
+        .expect("reader");
     let mut paths = Vec::new();
-    while let Some(item) = opened.next().await {
-        paths.push(read_entry(item.unwrap()).await.0);
+    while let Some(entry) = reader.next_entry().await.expect("next") {
+        paths.push(read_entry(entry).await.0);
     }
     assert_eq!(paths, ["etc/hosts", "usr", "usr/bin/app", "usr/bin/python"]);
 }
 
 #[tokio::test]
-async fn test_gnu_tar_reads_tara_output() {
+async fn gnu_tar_reads_etar_output() {
     let tar = pack_sample().await;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
     let archive = dir.path().join("out.tar");
-    std::fs::write(&archive, &tar).unwrap();
+    std::fs::write(&archive, &tar).expect("write fixture");
     let output = Command::new("tar")
         .arg("-tf")
         .arg(&archive)
         .output()
-        .unwrap();
+        .expect("tar");
     assert!(
         output.status.success(),
-        "gnu tar failed: {}",
+        "status={:?} stdout={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let listing = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        listing.contains("etc/hosts"),
-        "listing missing etc/hosts: {listing}"
-    );
-    assert!(
-        listing.contains("usr/bin/python"),
-        "listing missing symlink: {listing}"
-    );
+    let listing = String::from_utf8(output.stdout).expect("listing");
+    assert!(listing.contains("etc/hosts"));
+    assert!(listing.contains("usr/bin/python"));
 }
 
 #[tokio::test]
-async fn test_tara_opens_gnu_tar_output() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("sub")).unwrap();
-    std::fs::write(dir.path().join("sub/file.txt"), b"from gnu tar").unwrap();
+async fn etar_reads_gnu_tar_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("sub")).expect("mkdir");
+    std::fs::write(dir.path().join("sub/file.txt"), b"from gnu tar").expect("write");
     let archive = dir.path().join("in.tar");
     let status = Command::new("tar")
         .arg("-cf")
@@ -123,53 +121,68 @@ async fn test_tara_opens_gnu_tar_output() {
         .arg(dir.path())
         .arg("sub")
         .status()
-        .unwrap();
+        .expect("tar");
     assert!(status.success());
 
-    let bytes = std::fs::read(&archive).unwrap();
-    let opened = open(Cursor::new(bytes), SecurityLimits::default());
-    futures::pin_mut!(opened);
+    let bytes = std::fs::read(&archive).expect("read archive");
+    let mut reader = Reader::open(Cursor::new(bytes), ReadLimits::default())
+        .await
+        .expect("reader");
     let mut found = false;
-    while let Some(item) = opened.next().await {
-        let (path, _, body) = read_entry(item.unwrap()).await;
+    while let Some(entry) = reader.next_entry().await.expect("next") {
+        let (path, _, body) = read_entry(entry).await;
         if path == "sub/file.txt" {
             assert_eq!(body, b"from gnu tar");
             found = true;
         }
     }
-    assert!(found, "tara did not open the gnu tar entry");
+    assert!(found);
 }
 
 #[tokio::test]
 #[ignore = "needs erofs-utils (mkfs.erofs)"]
-async fn test_mkfs_erofs_consumes_tara_tar() {
-    let dir = tempfile::tempdir().unwrap();
+async fn mkfs_erofs_consumes_etar_tar() {
+    let dir = tempfile::tempdir().expect("tempdir");
     let tar = dir.path().join("rootfs.tar");
-    let raw = pack_raw_for_erofs().await;
-    std::fs::write(&tar, &raw).unwrap();
+    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let path = EntryPath::new("f").expect("path");
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+    writer
+        .append(
+            WriteEntry::file(path, meta, 10, Cursor::new(b"erofs body".to_vec())).expect("file"),
+        )
+        .await
+        .expect("append");
+    std::fs::write(&tar, writer.finish().await.expect("finish").sink).expect("write tar");
     let image = dir.path().join("rootfs.erofs");
-    let status = Command::new("mkfs.erofs")
+    let output = Command::new("mkfs.erofs")
         .arg("--tar=f")
         .arg(&image)
         .arg(&tar)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    let fsck = Command::new("fsck.erofs").arg(&image).status().unwrap();
-    assert!(fsck.success());
-}
-
-async fn pack_raw_for_erofs() -> Vec<u8> {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f"), b"erofs body").unwrap();
-    let archive = dir.path().join("r.tar");
-    Command::new("tar")
-        .arg("-cf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(dir.path())
-        .arg("f")
-        .status()
-        .unwrap();
-    std::fs::read(&archive).unwrap()
+        .output()
+        .expect("mkfs.erofs");
+    assert!(
+        output.status.success(),
+        "status={:?} stdout={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let extracted = dir.path().join("extracted");
+    std::fs::create_dir(&extracted).expect("mkdir");
+    let fsck = Command::new("fsck.erofs")
+        .arg(format!("--extract={}", extracted.display()))
+        .arg("--no-preserve-owner")
+        .arg(&image)
+        .output()
+        .expect("fsck.erofs");
+    assert!(
+        fsck.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+    assert_eq!(
+        std::fs::read(extracted.join("f")).expect("read"),
+        b"erofs body"
+    );
 }

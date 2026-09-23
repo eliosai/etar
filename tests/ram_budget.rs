@@ -3,11 +3,10 @@
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use futures::StreamExt;
+use etar::{EntryPath, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::Cursor;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tara::{Kind, Meta, PackEntry, SafePath, SecurityLimits, open, pack_to_sink};
 use tokio::io::{AsyncReadExt, AsyncWrite};
 
 /// Per-stream heap ceiling a single body must never breach
@@ -15,21 +14,23 @@ const BUDGET: usize = 16 * 1024 * 1024;
 /// A body far larger than the budget, proving independence from body size
 const HUGE: u64 = 256 * 1024 * 1024;
 
-fn huge_entry() -> PackEntry<tokio::io::Take<tokio::io::Repeat>> {
-    PackEntry {
-        path: SafePath::new("big.bin").unwrap(),
-        meta: Meta::new(0o644, 0, 0, 0, Kind::File),
-        size: HUGE,
-        body: Some(tokio::io::repeat(0u8).take(HUGE)),
-    }
+fn huge_entry() -> WriteEntry<tokio::io::Take<tokio::io::Repeat>> {
+    WriteEntry::file(
+        EntryPath::new("big.bin").unwrap(),
+        Meta::new(0o644, 0, 0, 0, Kind::File),
+        HUGE,
+        tokio::io::repeat(0u8).take(HUGE),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
 async fn test_pack_and_open_heap_stay_under_budget() {
     let pack_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
-        let stream = futures::stream::iter([Ok(huge_entry())]);
-        pack_to_sink(stream, tokio::io::sink()).await.unwrap();
+        let mut writer = Writer::new(tokio::io::sink(), Format::Tar);
+        writer.append(huge_entry()).await.unwrap();
+        writer.finish().await.unwrap();
         let peak = dhat::HeapStats::get().max_bytes;
         drop(profiler);
         peak
@@ -37,18 +38,20 @@ async fn test_pack_and_open_heap_stay_under_budget() {
     assert!(pack_peak < BUDGET, "pack peak heap {pack_peak} >= {BUDGET}");
 
     let tar = {
-        let stream = futures::stream::iter([Ok(huge_entry())]);
-        pack_to_sink(stream, Vec::new()).await.unwrap()
+        let mut writer = Writer::new(Vec::new(), Format::Tar);
+        writer.append(huge_entry()).await.unwrap();
+        writer.finish().await.unwrap().sink
     };
 
     let open_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
-        let opened = open(
+        let mut reader = Reader::open(
             Cursor::new(tar),
-            SecurityLimits::default().with_max_total_bytes(HUGE * 2),
-        );
-        futures::pin_mut!(opened);
-        while let Some(Ok(mut entry)) = opened.next().await {
+            ReadLimits::default().with_max_total_bytes(HUGE * 2),
+        )
+        .await
+        .unwrap();
+        while let Some(mut entry) = reader.next_entry().await.unwrap() {
             let _ = tokio::io::copy(&mut entry, &mut tokio::io::sink()).await;
         }
         let peak = dhat::HeapStats::get().max_bytes;
@@ -59,10 +62,9 @@ async fn test_pack_and_open_heap_stay_under_budget() {
 
     let slow_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
-        let stream = futures::stream::iter([Ok(huge_entry())]);
-        pack_to_sink(stream, ThrottledSink::default())
-            .await
-            .unwrap();
+        let mut writer = Writer::new(ThrottledSink::default(), Format::Tar);
+        writer.append(huge_entry()).await.unwrap();
+        writer.finish().await.unwrap();
         let peak = dhat::HeapStats::get().max_bytes;
         drop(profiler);
         peak

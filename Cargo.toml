@@ -1,23 +1,62 @@
+[workspace]
+resolver = "3"
+members = [".", "fuzz"]
+default-members = ["."]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Joshua Smotritsky", "Mike Smotritsky"]
+repository = "https://github.com/eliosai/etar"
+rust-version = "1.96"
+license = "MIT"
+
+[workspace.dependencies]
+etar = { path = ".", version = "0.1.0" }
+afl = "0.18.2"
+astral-tokio-tar = "0.6.2"
+async-compression = { version = "0.4.42", default-features = false, features = ["tokio", "zstd"] }
+bytes = "1.11"
+divan = { package = "codspeed-divan-compat", version = "5.0.2" }
+dhat = "0.3"
+futures = "0.3"
+object_store = "0.13"
+pin-project-lite = "0.2"
+pretty_assertions = "1"
+proptest = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1.50", features = ["fs", "io-util", "macros", "rt"] }
+
 [package]
-name = "tara"
+name = "etar"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bounded streaming reader, writer, and validator for tar and tar.zst"
+readme = "README.md"
+include = ["/src/**", "/tests/**", "/benches/**", "/README.md", "/LICENSE", "/docs/**"]
 
 [dependencies]
 astral-tokio-tar = { workspace = true }
 async-compression = { workspace = true }
-async-stream = { workspace = true }
-blake3 = { workspace = true }
-bytes = { workspace = true }
 pin-project-lite = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
+tempfile = { workspace = true }
 pretty_assertions = { workspace = true }
 proptest = { workspace = true }
 dhat = { workspace = true }
 object_store = { workspace = true }
+divan = { workspace = true }
+
+[[bench]]
+name = "streams"
+harness = false

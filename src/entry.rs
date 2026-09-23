@@ -1,5 +1,6 @@
 //! Filesystem entry vocabulary shared by pack and open
 
+use crate::error::Error;
 use std::path::{Component, Path, PathBuf};
 
 /// Unix metadata describing one archive entry
@@ -28,12 +29,12 @@ pub enum Kind {
     Dir,
     /// A symbolic link
     Symlink {
-        /// Untrusted link target as stored; tara never follows or materializes it
+        /// Untrusted link target as stored; etar never follows or materializes it
         target: PathBuf,
     },
     /// A hard link to another entry in the same archive
     Hardlink {
-        /// Untrusted in-archive target; tara never resolves or materializes it
+        /// Untrusted in-archive target; etar never resolves or materializes it
         target: PathBuf,
     },
 }
@@ -52,30 +53,22 @@ impl Meta {
 }
 
 /// A relative, in-tree, NUL-free entry path
+///
+/// # Example
+///
+/// ```
+/// use etar::{EntryPath, Error};
+///
+/// let path = EntryPath::new("etc/hosts").unwrap();
+/// assert_eq!(path.as_bytes(), b"etc/hosts");
+/// assert!(matches!(EntryPath::new("../escape"), Err(Error::ParentEscape)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SafePath(PathBuf);
 
-/// Why a path is unsafe to materialize
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum PathError {
-    /// The path is absolute or carries a drive prefix
-    #[error("absolute path")]
-    Absolute,
-    /// The path ascends out of its root with a parent component
-    #[error("parent escape")]
-    ParentEscape,
-    /// The path is empty
-    #[error("empty path")]
-    Empty,
-    /// The path contains a NUL byte
-    #[error("nul byte in path")]
-    Nul,
-}
-
 impl SafePath {
     /// Validate a path as relative, in-tree, and NUL-free under Linux path semantics
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, PathError> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         validate(path)?;
         Ok(Self(path.to_path_buf()))
@@ -85,16 +78,21 @@ impl SafePath {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
+
+    /// The original path bytes on this platform
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_os_str().as_encoded_bytes()
+    }
 }
 
 /// Reject empty, NUL-bearing, absolute, or ascending paths
-fn validate(path: &Path) -> Result<(), PathError> {
+fn validate(path: &Path) -> Result<(), Error> {
     let raw = path.as_os_str();
     if raw.is_empty() {
-        return Err(PathError::Empty);
+        return Err(Error::EmptyPath);
     }
     if raw.as_encoded_bytes().contains(&0) {
-        return Err(PathError::Nul);
+        return Err(Error::NulPath);
     }
     for component in path.components() {
         reject_unsafe(component)?;
@@ -103,10 +101,10 @@ fn validate(path: &Path) -> Result<(), PathError> {
 }
 
 /// Reject root, drive prefix, and parent components
-fn reject_unsafe(component: Component<'_>) -> Result<(), PathError> {
+fn reject_unsafe(component: Component<'_>) -> Result<(), Error> {
     match component {
-        Component::Prefix(_) | Component::RootDir => Err(PathError::Absolute),
-        Component::ParentDir => Err(PathError::ParentEscape),
+        Component::Prefix(_) | Component::RootDir => Err(Error::AbsolutePath),
+        Component::ParentDir => Err(Error::ParentEscape),
         Component::CurDir | Component::Normal(_) => Ok(()),
     }
 }
@@ -131,30 +129,36 @@ mod tests {
 
     #[test]
     fn test_safepath_rejects_absolute() {
-        assert_eq!(SafePath::new("/etc/passwd"), Err(PathError::Absolute));
+        assert!(matches!(
+            SafePath::new("/etc/passwd"),
+            Err(Error::AbsolutePath)
+        ));
     }
 
     #[test]
     fn test_safepath_rejects_leading_parent() {
-        assert_eq!(
+        assert!(matches!(
             SafePath::new("../../etc/passwd"),
-            Err(PathError::ParentEscape)
-        );
+            Err(Error::ParentEscape)
+        ));
     }
 
     #[test]
     fn test_safepath_rejects_embedded_parent() {
-        assert_eq!(SafePath::new("a/../../b"), Err(PathError::ParentEscape));
+        assert!(matches!(
+            SafePath::new("a/../../b"),
+            Err(Error::ParentEscape)
+        ));
     }
 
     #[test]
     fn test_safepath_rejects_empty() {
-        assert_eq!(SafePath::new(""), Err(PathError::Empty));
+        assert!(matches!(SafePath::new(""), Err(Error::EmptyPath)));
     }
 
     #[test]
     fn test_safepath_rejects_nul() {
-        assert_eq!(SafePath::new("a\0b"), Err(PathError::Nul));
+        assert!(matches!(SafePath::new("a\0b"), Err(Error::NulPath)));
     }
 
     /// One path component biased toward the dangerous alphabet
@@ -168,7 +172,7 @@ mod tests {
             let raw = parts.join("/");
             let result = SafePath::new(&raw);
             if parts.iter().any(|p| p == "..") {
-                prop_assert_eq!(result, Err(PathError::ParentEscape));
+                prop_assert!(matches!(result, Err(Error::ParentEscape)));
             } else {
                 let safe = result.expect("non-escape path is accepted");
                 for c in safe.as_path().components() {
@@ -180,7 +184,7 @@ mod tests {
         #[test]
         fn prop_leading_slash_is_absolute(parts in proptest::collection::vec("[a-z]{1,5}", 1..6)) {
             let raw = format!("/{}", parts.join("/"));
-            prop_assert_eq!(SafePath::new(&raw), Err(PathError::Absolute));
+            prop_assert!(matches!(SafePath::new(&raw), Err(Error::AbsolutePath)));
         }
     }
 }

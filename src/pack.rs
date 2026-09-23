@@ -1,25 +1,13 @@
-//! Streaming pack of an entry stream into an uncompressed tar sink
+//! Tar entry encoding shared by both output formats
 
 use crate::entry::{Kind, Meta, SafePath};
-use futures::{Stream, StreamExt};
+use crate::error::Error;
 use pin_project_lite::pin_project;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio_tar::{Builder, EntryType, Header};
-
-/// Why packing an entry stream failed
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum PackError {
-    /// A file entry arrived without a body
-    #[error("missing file body")]
-    MissingBody,
-    /// The underlying write or a body read failed
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
 
 /// One entry to pack: metadata, byte length, and a body for files
 pub struct PackEntry<B> {
@@ -33,23 +21,6 @@ pub struct PackEntry<B> {
     pub body: Option<B>,
 }
 
-/// Pack an entry stream into an uncompressed tar, returning the finalized sink
-pub async fn pack_to_sink<S, B, W>(entries: S, sink: W) -> Result<W, PackError>
-where
-    S: Stream<Item = Result<PackEntry<B>, PackError>> + Send,
-    B: AsyncRead + Unpin + Send,
-    W: AsyncWrite + Unpin + Send + 'static,
-{
-    let mut builder = Builder::new(sink);
-    futures::pin_mut!(entries);
-    while let Some(entry) = entries.next().await {
-        append(&mut builder, entry?).await?;
-    }
-    let mut sink = builder.into_inner().await?;
-    sink.shutdown().await?;
-    Ok(sink)
-}
-
 /// Build the header common to every kind from the entry metadata
 fn base_header(meta: &Meta) -> Header {
     let mut header = Header::new_gnu();
@@ -61,7 +32,7 @@ fn base_header(meta: &Meta) -> Header {
 }
 
 /// Append one entry, streaming a file body or emitting a metadata-only record
-async fn append<B, W>(builder: &mut Builder<W>, entry: PackEntry<B>) -> Result<(), PackError>
+pub async fn append<B, W>(builder: &mut Builder<W>, entry: PackEntry<B>) -> Result<(), Error>
 where
     B: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
@@ -72,6 +43,9 @@ where
         size,
         body,
     } = entry;
+    if !matches!(&meta.kind, Kind::File) && (size != 0 || body.is_some()) {
+        return Err(Error::NonFilePayload);
+    }
     let mut header = base_header(&meta);
     match meta.kind {
         Kind::File => append_file(builder, &mut header, path.as_path(), size, body).await,
@@ -115,17 +89,26 @@ async fn append_file<B, W>(
     path: &Path,
     size: u64,
     body: Option<B>,
-) -> Result<(), PackError>
+) -> Result<(), Error>
 where
     B: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
     header.set_entry_type(EntryType::Regular);
     header.set_size(size);
-    let body = body.ok_or(PackError::MissingBody)?;
-    builder
-        .append_data(header, path, Exact::new(body, size))
-        .await?;
+    let mut body = body.ok_or(Error::MissingBody)?;
+    let mut mismatch = false;
+    let result = builder
+        .append_data(header, path, Exact::new(&mut body, size, &mut mismatch))
+        .await;
+    if mismatch {
+        return Err(Error::BodyLengthMismatch);
+    }
+    result?;
+    let mut extra = [0u8; 1];
+    if body.read(&mut extra).await? != 0 {
+        return Err(Error::BodyLengthMismatch);
+    }
     Ok(())
 }
 
@@ -136,7 +119,7 @@ async fn append_meta<W>(
     path: &Path,
     kind: EntryType,
     link: Option<PathBuf>,
-) -> Result<(), PackError>
+) -> Result<(), Error>
 where
     W: AsyncWrite + Unpin + Send,
 {
@@ -153,23 +136,25 @@ where
 
 pin_project! {
     /// Yields exactly `remaining` bytes, erroring on a short or long body
-    struct Exact<R> {
+    struct Exact<'a, R> {
         #[pin]
         inner: R,
         remaining: u64,
+        mismatch: &'a mut bool,
     }
 }
 
-impl<R> Exact<R> {
-    fn new(inner: R, len: u64) -> Self {
+impl<'a, R> Exact<'a, R> {
+    fn new(inner: R, len: u64, mismatch: &'a mut bool) -> Self {
         Self {
             inner,
             remaining: len,
+            mismatch,
         }
     }
 }
 
-impl<R: AsyncRead> AsyncRead for Exact<R> {
+impl<R: AsyncRead> AsyncRead for Exact<'_, R> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -184,10 +169,12 @@ impl<R: AsyncRead> AsyncRead for Exact<R> {
         let read = (buf.filled().len() - before) as u64;
         if let Poll::Ready(Ok(())) = &result {
             if read == 0 {
+                **this.mismatch = true;
                 return Poll::Ready(Err(length_mismatch()));
             }
             if read > *this.remaining {
                 buf.set_filled(before + *this.remaining as usize);
+                **this.mismatch = true;
                 return Poll::Ready(Err(length_mismatch()));
             }
             *this.remaining -= read;
@@ -205,7 +192,7 @@ fn length_mismatch() -> std::io::Error {
 mod tests {
     use super::*;
     use crate::limits::SecurityLimits;
-    use crate::open::{OpenEntry, open};
+    use crate::reader::Reader;
     use pretty_assertions::assert_eq;
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
@@ -229,27 +216,27 @@ mod tests {
         }
     }
 
-    async fn pack(entries: Vec<PackEntry<Cursor<Vec<u8>>>>) -> Result<Vec<u8>, PackError> {
-        let stream = futures::stream::iter(entries.into_iter().map(Ok));
-        pack_to_sink(stream, Vec::new()).await
+    async fn pack(entries: Vec<PackEntry<Cursor<Vec<u8>>>>) -> Result<Vec<u8>, Error> {
+        let mut builder = Builder::new(Vec::new());
+        for entry in entries {
+            append(&mut builder, entry).await?;
+        }
+        Ok(builder.into_inner().await?)
     }
 
     async fn open_all(tar: Vec<u8>) -> Vec<(SafePath, Kind, Vec<u8>)> {
-        let stream = open(Cursor::new(tar), SecurityLimits::default());
-        futures::pin_mut!(stream);
+        let mut reader = Reader::open(Cursor::new(tar), SecurityLimits::default())
+            .await
+            .unwrap();
         let mut out = Vec::new();
-        while let Some(item) = stream.next().await {
-            out.push(read_entry(item.unwrap()).await);
+        while let Some(mut entry) = reader.next_entry().await.unwrap() {
+            let path = entry.header().path.clone();
+            let kind = entry.header().meta.kind.clone();
+            let mut body = Vec::new();
+            entry.read_to_end(&mut body).await.unwrap();
+            out.push((path, kind, body));
         }
         out
-    }
-
-    async fn read_entry(mut entry: OpenEntry) -> (SafePath, Kind, Vec<u8>) {
-        let path = entry.path.clone();
-        let kind = entry.meta.kind.clone();
-        let mut body = Vec::new();
-        entry.read_to_end(&mut body).await.unwrap();
-        (path, kind, body)
     }
 
     #[tokio::test]
@@ -308,7 +295,10 @@ mod tests {
             size: 10,
             body: Some(Cursor::new(b"hello".to_vec())),
         };
-        assert!(matches!(pack(vec![entry]).await, Err(PackError::Io(_))));
+        assert!(matches!(
+            pack(vec![entry]).await,
+            Err(Error::BodyLengthMismatch)
+        ));
     }
 
     #[tokio::test]
@@ -319,10 +309,7 @@ mod tests {
             size: 0,
             body: None,
         };
-        assert!(matches!(
-            pack(vec![entry]).await,
-            Err(PackError::MissingBody)
-        ));
+        assert!(matches!(pack(vec![entry]).await, Err(Error::MissingBody)));
     }
 
     #[tokio::test]
@@ -349,10 +336,11 @@ mod tests {
             body: Some(Cursor::new(b"abc".to_vec())),
         };
         let tar = pack(vec![entry]).await.unwrap();
-        let stream = open(Cursor::new(tar), SecurityLimits::default());
-        futures::pin_mut!(stream);
-        let opened = stream.next().await.unwrap().unwrap();
-        assert_eq!(opened.meta, expected);
+        let mut reader = Reader::open(Cursor::new(tar), SecurityLimits::default())
+            .await
+            .unwrap();
+        let opened = reader.next_entry().await.unwrap().unwrap();
+        assert_eq!(opened.header().meta, &expected);
     }
 
     #[tokio::test]

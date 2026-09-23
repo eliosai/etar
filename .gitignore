@@ -1,0 +1,10 @@
+/target/
+/.verify.*/
+/fuzz/target/
+/fuzz/findings/
+/.env
+*.log
+.claude/*
+!.claude/skills
+.idea/
+.vscode/

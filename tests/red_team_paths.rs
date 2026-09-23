@@ -1,7 +1,7 @@
 //! Red-team corpus for SafePath, adapted from directory-traversal payloads
 
+use etar::{EntryPath as SafePath, Error};
 use std::path::Component;
-use tara::{PathError, SafePath};
 
 #[test]
 fn test_traversal_payloads_are_rejected() {
@@ -23,7 +23,7 @@ fn test_traversal_payloads_are_rejected() {
     for attack in attacks {
         let actual = SafePath::new(attack);
         assert!(
-            matches!(actual, Err(PathError::Absolute | PathError::ParentEscape)),
+            matches!(actual, Err(Error::AbsolutePath | Error::ParentEscape)),
             "payload should be rejected: {attack:?} got {actual:?}"
         );
     }
@@ -31,8 +31,11 @@ fn test_traversal_payloads_are_rejected() {
 
 #[test]
 fn test_nul_and_empty_are_rejected() {
-    assert_eq!(SafePath::new("a\0/etc/passwd"), Err(PathError::Nul));
-    assert_eq!(SafePath::new(""), Err(PathError::Empty));
+    assert!(matches!(
+        SafePath::new("a\0/etc/passwd"),
+        Err(Error::NulPath)
+    ));
+    assert!(matches!(SafePath::new(""), Err(Error::EmptyPath)));
 }
 
 #[test]

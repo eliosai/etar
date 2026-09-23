@@ -1,54 +1,31 @@
-//! Streaming open of an untrusted tar(.zst/.gz) into validated entries
+//! Streaming open of an untrusted tar or tar.zst into validated entries
 
-use crate::compress;
-use crate::entry::{Kind, Meta, PathError, SafePath};
+use crate::entry::{Kind, Meta, SafePath};
+use crate::error::Error;
 use crate::limits::SecurityLimits;
-use futures::{Stream, StreamExt};
+use crate::settings::open::RATIO_FLOOR_BYTES;
 use pin_project_lite::pin_project;
+use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio_tar::{Archive, Entry, EntryType};
-
-/// Output below which the compression-ratio guard stays silent
-const RATIO_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
-
-/// Why opening an untrusted archive failed
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum OpenError {
-    /// An entry path was unsafe to materialize
-    #[error("unsafe path: {0}")]
-    UnsafePath(#[from] PathError),
-    /// A configured limit was exceeded
-    #[error("limit exceeded: {0}")]
-    LimitExceeded(&'static str),
-    /// An entry carried a disallowed type
-    #[error("disallowed entry type")]
-    DisallowedEntryType,
-    /// The archive was malformed
-    #[error("malformed archive")]
-    Malformed,
-    /// The underlying transport failed
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
+use tokio_tar::{Entry, EntryType};
 
 /// One validated entry whose body is bounded as it is read
-pub struct OpenEntry {
+pub struct OpenEntry<R: AsyncRead + Unpin> {
     /// The validated relative path
     pub path: SafePath,
     /// The entry's unix metadata
     pub meta: Meta,
     /// The header-claimed body length, advisory only
     pub size_bytes: u64,
-    body: Box<dyn AsyncRead + Unpin + Send>,
+    body: Bounded<Entry<R>>,
 }
 
-impl AsyncRead for OpenEntry {
+impl<R: AsyncRead + Unpin> AsyncRead for OpenEntry<R> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -58,69 +35,44 @@ impl AsyncRead for OpenEntry {
     }
 }
 
-/// Open an untrusted archive as a lazy, ordered stream of validated entries
-pub fn open<R>(src: R, limits: SecurityLimits) -> impl Stream<Item = Result<OpenEntry, OpenError>>
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    async_stream::try_stream! {
-        let compressed = Arc::new(AtomicU64::new(0));
-        let decoded = compress::decoded(Meter::new(src, compressed.clone())).await?;
-        let total = Arc::new(AtomicU64::new(0));
-        let cap = Cap::new(decoded, total.clone(), compressed, limits.max_total_bytes, limits.max_compression_ratio);
-        let mut archive = Archive::new(cap);
-        let mut entries = archive.entries()?;
-        let live = Arc::new(AtomicU64::new(0));
-        let mut seen = 0u64;
-        while let Some(item) = entries.next().await {
-            let entry = item.map_err(|e| read_error(e, &total, limits.max_total_bytes))?;
-            seen += 1;
-            if seen > limits.max_entries {
-                Err(OpenError::LimitExceeded("max_entries"))?;
-            }
-            let generation = live.fetch_add(1, Ordering::Relaxed) + 1;
-            yield open_entry(entry, &limits, live.clone(), generation)?;
-        }
-    }
-}
-
 /// Validate one entry and wrap its body with the byte bounds
-fn open_entry<R>(
-    entry: Entry<R>,
-    limits: &SecurityLimits,
-    live: Arc<AtomicU64>,
-    generation: u64,
-) -> Result<OpenEntry, OpenError>
+pub fn open_entry<R>(entry: Entry<R>, limits: &SecurityLimits) -> Result<OpenEntry<R>, Error>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let path = validate_path(&entry, limits)?;
     let kind = classify(&entry, limits)?;
+    let size_bytes = entry.header().size().map_err(|_| Error::Malformed)?;
+    if !matches!(&kind, Kind::File) && size_bytes != 0 {
+        return Err(Error::NonFilePayload);
+    }
+    if size_bytes > limits.max_entry_bytes {
+        return Err(Error::LimitExceeded("max_entry_bytes"));
+    }
     let meta = read_meta(&entry, kind)?;
-    let size_bytes = entry.header().size().map_err(|_| OpenError::Malformed)?;
-    let body = Bounded::new(entry, limits.max_entry_bytes, live, generation);
+    let body = Bounded::new(entry, limits.max_entry_bytes);
     Ok(OpenEntry {
         path,
         meta,
         size_bytes,
-        body: Box::new(body),
+        body,
     })
 }
 
 /// Validate the entry path against length and traversal rules
-fn validate_path<R>(entry: &Entry<R>, limits: &SecurityLimits) -> Result<SafePath, OpenError>
+fn validate_path<R>(entry: &Entry<R>, limits: &SecurityLimits) -> Result<SafePath, Error>
 where
     R: AsyncRead + Unpin,
 {
-    let raw = entry.path().map_err(|_| OpenError::Malformed)?;
+    let raw = entry.path().map_err(|_| Error::Malformed)?;
     if raw.as_os_str().len() > limits.max_path_len {
-        return Err(OpenError::LimitExceeded("max_path_len"));
+        return Err(Error::LimitExceeded("max_path_len"));
     }
-    Ok(SafePath::new(&raw)?)
+    SafePath::new(&raw)
 }
 
 /// Map the tar entry type to a kind, rejecting dangerous types
-fn classify<R>(entry: &Entry<R>, limits: &SecurityLimits) -> Result<Kind, OpenError>
+fn classify<R>(entry: &Entry<R>, limits: &SecurityLimits) -> Result<Kind, Error>
 where
     R: AsyncRead + Unpin,
 {
@@ -133,42 +85,42 @@ where
         EntryType::Link if limits.allow_hardlinks => {
             link(entry).map(|target| Kind::Hardlink { target })
         }
-        _ => Err(OpenError::DisallowedEntryType),
+        _ => Err(Error::DisallowedEntryType),
     }
 }
 
 /// Read a link entry's untrusted target
-fn link<R>(entry: &Entry<R>) -> Result<PathBuf, OpenError>
+fn link<R>(entry: &Entry<R>) -> Result<PathBuf, Error>
 where
     R: AsyncRead + Unpin,
 {
-    let name = entry.link_name().map_err(|_| OpenError::Malformed)?;
-    Ok(name.ok_or(OpenError::Malformed)?.into_owned())
+    let name = entry.link_name().map_err(|_| Error::Malformed)?;
+    Ok(name.ok_or(Error::Malformed)?.into_owned())
 }
 
 /// Read the entry's unix metadata from its header
-fn read_meta<R>(entry: &Entry<R>, kind: Kind) -> Result<Meta, OpenError>
+fn read_meta<R>(entry: &Entry<R>, kind: Kind) -> Result<Meta, Error>
 where
     R: AsyncRead + Unpin,
 {
     let header = entry.header();
     Ok(Meta {
-        mode: header.mode().map_err(|_| OpenError::Malformed)?,
-        uid: small_id(header.uid().map_err(|_| OpenError::Malformed)?)?,
-        gid: small_id(header.gid().map_err(|_| OpenError::Malformed)?)?,
-        mtime_unix_secs: header.mtime().map_err(|_| OpenError::Malformed)?,
+        mode: header.mode().map_err(|_| Error::Malformed)?,
+        uid: small_id(header.uid().map_err(|_| Error::Malformed)?)?,
+        gid: small_id(header.gid().map_err(|_| Error::Malformed)?)?,
+        mtime_unix_secs: header.mtime().map_err(|_| Error::Malformed)?,
         kind,
     })
 }
 
 /// Narrow a tar uid or gid to the kernel's u32 width, rejecting overflow
-fn small_id(id: u64) -> Result<u32, OpenError> {
-    u32::try_from(id).map_err(|_| OpenError::Malformed)
+fn small_id(id: u64) -> Result<u32, Error> {
+    u32::try_from(id).map_err(|_| Error::Malformed)
 }
 
 pin_project! {
     /// Counts source bytes pulled, including buffered read-ahead, for the ratio
-    struct Meter<R> {
+    pub struct Meter<R> {
         #[pin]
         inner: R,
         count: Arc<AtomicU64>,
@@ -176,7 +128,7 @@ pin_project! {
 }
 
 impl<R> Meter<R> {
-    fn new(inner: R, count: Arc<AtomicU64>) -> Self {
+    pub fn new(inner: R, count: Arc<AtomicU64>) -> Self {
         Self { inner, count }
     }
 }
@@ -194,7 +146,12 @@ impl<R: AsyncRead> AsyncRead for Meter<R> {
         if read > 0 {
             this.count.fetch_add(read, Ordering::Relaxed);
         }
-        result
+        match result {
+            Poll::Ready(Err(error)) => {
+                Poll::Ready(Err(io::Error::new(error.kind(), Error::Io(error))))
+            }
+            other => other,
+        }
     }
 }
 
@@ -204,19 +161,15 @@ pin_project! {
         #[pin]
         inner: R,
         remaining: u64,
-        live: Arc<AtomicU64>,
-        generation: u64,
         failed: bool,
     }
 }
 
 impl<R> Bounded<R> {
-    fn new(inner: R, entry_max: u64, live: Arc<AtomicU64>, generation: u64) -> Self {
+    fn new(inner: R, entry_max: u64) -> Self {
         Self {
             inner,
             remaining: entry_max,
-            live,
-            generation,
             failed: false,
         }
     }
@@ -231,10 +184,6 @@ impl<R: AsyncRead> AsyncRead for Bounded<R> {
         let this = self.project();
         if *this.failed {
             return Poll::Ready(Err(cap_error("aborted entry body")));
-        }
-        if *this.generation != this.live.load(Ordering::Relaxed) {
-            *this.failed = true;
-            return Poll::Ready(Err(cap_error("stale entry body")));
         }
         let before = buf.filled().len();
         let result = this.inner.poll_read(cx, buf);
@@ -251,7 +200,7 @@ impl<R: AsyncRead> AsyncRead for Bounded<R> {
 
 pin_project! {
     /// Bounds total decoded bytes and the decompression ratio mid-decode
-    struct Cap<R> {
+    pub struct Cap<R> {
         #[pin]
         inner: R,
         total: Arc<AtomicU64>,
@@ -263,7 +212,7 @@ pin_project! {
 }
 
 impl<R> Cap<R> {
-    fn new(
+    pub fn new(
         inner: R,
         total: Arc<AtomicU64>,
         compressed: Arc<AtomicU64>,
@@ -331,22 +280,30 @@ fn breach(
 }
 
 /// Classify a parser read failure as a total-cap breach or malformed input
-fn read_error(_error: std::io::Error, total: &AtomicU64, max: u64) -> OpenError {
-    if total.load(Ordering::Relaxed) >= max {
-        OpenError::LimitExceeded("max_total_bytes")
-    } else {
-        OpenError::Malformed
+pub fn read_error(error: std::io::Error, total: &AtomicU64, max: u64) -> Error {
+    if total.load(Ordering::Relaxed) > max {
+        return Error::LimitExceeded("max_total_bytes");
+    }
+    match error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<Error>())
+    {
+        Some(Error::LimitExceeded(which)) => Error::LimitExceeded(which),
+        Some(Error::DisallowedEntryType) => Error::DisallowedEntryType,
+        Some(Error::Io(_)) => Error::Io(error),
+        _ => Error::Malformed,
     }
 }
 
 /// A read error standing for a breached byte cap
 fn cap_error(which: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, which)
+    std::io::Error::new(std::io::ErrorKind::InvalidData, Error::LimitExceeded(which))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reader::Reader;
     use pretty_assertions::assert_eq;
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
@@ -373,20 +330,28 @@ mod tests {
     async fn collect(
         tar: Vec<u8>,
         limits: SecurityLimits,
-    ) -> Vec<Result<(SafePath, Vec<u8>), OpenError>> {
-        let stream = open(Cursor::new(tar), limits);
-        futures::pin_mut!(stream);
+    ) -> Vec<Result<(SafePath, Vec<u8>), Error>> {
+        let mut reader = Reader::open(Cursor::new(tar), limits).await.unwrap();
         let mut out = Vec::new();
-        while let Some(item) = stream.next().await {
+        loop {
+            let item = match reader.next_entry().await {
+                Ok(Some(entry)) => Ok(entry),
+                Ok(None) => break,
+                Err(error) => Err(error),
+            };
             match item {
                 Ok(mut entry) => {
+                    let path = entry.header().path.clone();
                     let mut body = Vec::new();
                     match entry.read_to_end(&mut body).await {
-                        Ok(_) => out.push(Ok((entry.path.clone(), body))),
-                        Err(error) => out.push(Err(OpenError::Io(error))),
+                        Ok(_) => out.push(Ok((path, body))),
+                        Err(error) => out.push(Err(Error::Io(error))),
                     }
                 }
-                Err(error) => out.push(Err(error)),
+                Err(error) => {
+                    out.push(Err(error));
+                    break;
+                }
             }
         }
         out
@@ -412,7 +377,7 @@ mod tests {
         let got = collect(tar, SecurityLimits::default().with_max_entries(1)).await;
         assert!(matches!(
             got.last(),
-            Some(Err(OpenError::LimitExceeded("max_entries")))
+            Some(Err(Error::LimitExceeded("max_entries")))
         ));
     }
 
@@ -420,14 +385,17 @@ mod tests {
     async fn test_max_entry_bytes_is_enforced() {
         let tar = tar_of(&[("big", EntryType::Regular, b"0123456789")]).await;
         let got = collect(tar, SecurityLimits::default().with_max_entry_bytes(4)).await;
-        assert!(matches!(got[0], Err(OpenError::Io(_))));
+        assert!(matches!(
+            got[0],
+            Err(Error::LimitExceeded("max_entry_bytes"))
+        ));
     }
 
     #[tokio::test]
     async fn test_device_entry_is_rejected() {
         let tar = tar_of(&[("dev/null", EntryType::Char, b"")]).await;
         let got = collect(tar, SecurityLimits::default()).await;
-        assert!(matches!(got[0], Err(OpenError::DisallowedEntryType)));
+        assert!(matches!(got[0], Err(Error::DisallowedEntryType)));
     }
 
     #[tokio::test]
@@ -442,7 +410,7 @@ mod tests {
         builder.append(&header, &b""[..]).await.unwrap();
         let tar = builder.into_inner().await.unwrap();
         let got = collect(tar, SecurityLimits::default().with_symlinks(false)).await;
-        assert!(matches!(got[0], Err(OpenError::DisallowedEntryType)));
+        assert!(matches!(got[0], Err(Error::DisallowedEntryType)));
     }
 
     #[tokio::test]
@@ -457,7 +425,7 @@ mod tests {
         builder.append(&header, &b""[..]).await.unwrap();
         let tar = builder.into_inner().await.unwrap();
         let got = collect(tar, SecurityLimits::default().with_hardlinks(false)).await;
-        assert!(matches!(got[0], Err(OpenError::DisallowedEntryType)));
+        assert!(matches!(got[0], Err(Error::DisallowedEntryType)));
     }
 
     #[tokio::test]
@@ -465,7 +433,7 @@ mod tests {
         let tar = raw_path_entry("../../etc/passwd", b"x");
         let got = collect(tar, SecurityLimits::default()).await;
         assert!(
-            matches!(got[0], Err(OpenError::UnsafePath(_))),
+            matches!(got[0], Err(Error::ParentEscape)),
             "{:?}",
             got.first()
         );
@@ -475,7 +443,7 @@ mod tests {
     async fn test_total_decoded_cap_aborts_oversized_body() {
         let tar = tar_of(&[("f", EntryType::Regular, &[b'x'; 4096])]).await;
         let got = collect(tar, SecurityLimits::default().with_max_total_bytes(1024)).await;
-        assert!(matches!(got[0], Err(OpenError::Io(_))));
+        assert!(matches!(got[0], Err(Error::Io(_))));
     }
 
     #[tokio::test]
@@ -489,27 +457,11 @@ mod tests {
         assert!(
             matches!(
                 got.first(),
-                Some(Err(OpenError::LimitExceeded("max_total_bytes")))
+                Some(Err(Error::LimitExceeded("max_total_bytes")))
             ),
             "{:?}",
             got.first()
         );
-    }
-
-    #[tokio::test]
-    async fn test_stale_body_after_advance_errors() {
-        let tar = tar_of(&[
-            ("a", EntryType::Regular, b"AAAAAAAAAA"),
-            ("b", EntryType::Regular, b"BBBBBBBBBB"),
-        ])
-        .await;
-        let stream = open(Cursor::new(tar), SecurityLimits::default());
-        futures::pin_mut!(stream);
-        let mut first = stream.next().await.unwrap().unwrap();
-        let _second = stream.next().await.unwrap().unwrap();
-        let mut body = Vec::new();
-        let error = first.read_to_end(&mut body).await.unwrap_err();
-        assert_eq!(error.to_string(), "stale entry body");
     }
 
     #[tokio::test]
@@ -523,9 +475,31 @@ mod tests {
         let limits = SecurityLimits::default().with_max_compression_ratio(50);
         let got = collect(encoder.into_inner(), limits).await;
         match &got[0] {
-            Err(OpenError::Io(error)) => assert_eq!(error.to_string(), "max_compression_ratio"),
+            Err(Error::Io(error)) => {
+                assert_eq!(error.to_string(), "limit exceeded: max_compression_ratio")
+            }
             other => panic!("expected ratio cap, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_ratio_limit_is_reported_while_parsing_an_extension() {
+        use async_compression::tokio::write::ZstdEncoder;
+        use tokio::io::AsyncWriteExt;
+
+        let tar = long_name_bomb(16 * 1024 * 1024, 16 * 1024 * 1024);
+        let mut encoder = ZstdEncoder::new(Vec::new());
+        encoder.write_all(&tar).await.unwrap();
+        encoder.shutdown().await.unwrap();
+
+        let limits = SecurityLimits::default()
+            .with_max_compression_ratio(50)
+            .with_max_metadata_bytes(32 * 1024 * 1024);
+        let got = collect(encoder.into_inner(), limits).await;
+        assert!(matches!(
+            got.first(),
+            Some(Err(Error::LimitExceeded("max_compression_ratio")))
+        ));
     }
 
     fn raw_path_entry(name: &str, body: &[u8]) -> Vec<u8> {

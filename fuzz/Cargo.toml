@@ -1,5 +1,5 @@
 [package]
-name = "tara-fuzz"
+name = "etar-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -7,8 +7,7 @@ edition = "2024"
 [dependencies]
 afl = { workspace = true }
 tokio = { workspace = true, features = ["rt", "io-util"] }
-futures = { workspace = true }
-tara = { workspace = true }
+etar = { workspace = true }
 
 [[bin]]
 name = "open"

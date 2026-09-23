@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: ""
+
+jobs:
+  release:
+    if: ${{ vars.ETAR_RELEASE_ENABLED == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')) }}
+    environment: crates-io
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: "1.97"
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest,cargo-deny,cargo-semver-checks,git-cliff
+      - run: just check
+      - run: just test-ci
+      - run: just test-doc
+      - run: just doc-check
+      - run: just package-check
+      - run: just audit
+      - name: check crates.io publication state
+        id: registry
+        shell: bash
+        run: |
+          status="$(curl --silent --show-error --location --max-time 15 \
+            --output /dev/null --write-out '%{http_code}' \
+            https://index.crates.io/et/ar/etar)"
+          case "$status" in
+            200) echo 'existing=true' >> "$GITHUB_OUTPUT" ;;
+            404) echo 'existing=false' >> "$GITHUB_OUTPUT" ;;
+            *) echo "crates.io index returned HTTP $status" >&2; exit 1 ;;
+          esac
+      - name: get a short-lived crates.io token
+        if: steps.registry.outputs.existing == 'true'
+        id: crates
+        uses: rust-lang/crates-io-auth-action@v1.0.5
+      - name: release a conventional version
+        run: bash scripts/release.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.registry.outputs.existing == 'true' && steps.crates.outputs.token || secrets.ETAR_BOOTSTRAP_CARGO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
