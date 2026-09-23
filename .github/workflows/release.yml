@@ -33,6 +33,8 @@ jobs:
           toolchain: "1.97"
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest,cargo-deny,cargo-semver-checks,git-cliff
@@ -42,24 +44,11 @@ jobs:
       - run: just doc-check
       - run: just package-check
       - run: just audit
-      - name: check crates.io publication state
-        id: registry
-        shell: bash
-        run: |
-          status="$(curl --silent --show-error --location --max-time 15 \
-            --output /dev/null --write-out '%{http_code}' \
-            https://index.crates.io/et/ar/etar)"
-          case "$status" in
-            200) echo 'existing=true' >> "$GITHUB_OUTPUT" ;;
-            404) echo 'existing=false' >> "$GITHUB_OUTPUT" ;;
-            *) echo "crates.io index returned HTTP $status" >&2; exit 1 ;;
-          esac
       - name: get a short-lived crates.io token
-        if: steps.registry.outputs.existing == 'true'
         id: crates
         uses: rust-lang/crates-io-auth-action@v1.0.5
       - name: release a conventional version
         run: bash scripts/release.sh
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.registry.outputs.existing == 'true' && steps.crates.outputs.token || secrets.ETAR_BOOTSTRAP_CARGO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates.outputs.token }}
           GH_TOKEN: ${{ github.token }}
