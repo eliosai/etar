@@ -134,7 +134,11 @@ if ! $retry; then
         range=("$last_tag..HEAD")
     fi
     git-cliff --tag "v$next" --unreleased --strip all "${range[@]}" >"$notes"
-    git-cliff --tag "v$next" --unreleased --prepend CHANGELOG.md "${range[@]}"
+    if [[ -f CHANGELOG.md ]]; then
+        git-cliff --tag "v$next" --unreleased --prepend CHANGELOG.md "${range[@]}"
+    else
+        git-cliff --tag "v$next" --unreleased --output CHANGELOG.md "${range[@]}"
+    fi
     cargo package -p etar --locked --allow-dirty
     git config user.name 'github-actions[bot]'
     git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

@@ -20,6 +20,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-semver-checks
+          tool: just,cargo-semver-checks,git-cliff
       - run: just release-plan
+      - name: check first-release changelog generation
+        if: ${{ hashFiles('CHANGELOG.md') == '' }}
+        run: git-cliff --tag v0.1.0 --unreleased --output "$RUNNER_TEMP/etar-first-changelog.md"
       - run: just package-check
