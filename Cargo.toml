@@ -1,0 +1,23 @@
+[package]
+name = "tara"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+astral-tokio-tar = { workspace = true }
+async-compression = { workspace = true }
+async-stream = { workspace = true }
+blake3 = { workspace = true }
+bytes = { workspace = true }
+pin-project-lite = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+dhat = { workspace = true }
+object_store = { workspace = true }

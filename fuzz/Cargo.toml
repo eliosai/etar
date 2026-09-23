@@ -1,0 +1,18 @@
+[package]
+name = "tara-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[dependencies]
+afl = { workspace = true }
+tokio = { workspace = true, features = ["rt", "io-util"] }
+futures = { workspace = true }
+tara = { workspace = true }
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
