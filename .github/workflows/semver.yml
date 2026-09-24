@@ -1,6 +1,7 @@
 name: semver
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
@@ -8,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: semver-${{ github.event.pull_request.number }}
+  group: semver-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,8 +27,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-semver-checks
-      - name: check the public interface against the PR base
+      - name: check the public API
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           RELEASE_TYPE: ${{ contains(github.event.pull_request.labels.*.name, 'semver-major') && 'major' || 'minor' }}
         run: just semver-check "$BASE_SHA" "$RELEASE_TYPE"
