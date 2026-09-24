@@ -24,6 +24,8 @@ jobs:
         with:
           toolchain: "1.97"
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-semver-checks
