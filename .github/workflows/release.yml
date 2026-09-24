@@ -43,6 +43,7 @@ jobs:
       - run: just test-doc
       - run: just doc-check
       - run: just package-check
+      - run: just release-test
       - run: just audit
       - name: get a short-lived crates.io token
         id: crates

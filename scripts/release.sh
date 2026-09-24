@@ -45,7 +45,10 @@ release_kind() {
     if rg -q 'BREAKING CHANGE:|^[a-z][a-z0-9-]*(\([^)]*\))?!:' <<<"$messages"; then
         echo major
     elif ! bash scripts/semver-check.sh "$last_tag" minor >/dev/null; then
-        bash scripts/semver-check.sh "$last_tag" major >/dev/null
+        if ! bash scripts/semver-check.sh "$last_tag" major >/dev/null; then
+            echo 'semver checks failed; refusing to select a release' >&2
+            return 1
+        fi
         echo major
     elif rg -q '^feat(\([^)]*\))?:' <<<"$messages"; then
         echo minor
@@ -68,7 +71,7 @@ if [[ -z "$last_tag" ]]; then
     reason='first release from Cargo.toml'
 else
     tagged="${last_tag#v}"
-    kind="$(release_kind)"
+    kind="$(release_kind)" || exit 1
     if [[ "$current" != "$tagged" ]]; then
         if ! version_ge "$current" "$tagged"; then
             echo "Cargo.toml version $current is older than $last_tag" >&2

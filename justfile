@@ -56,6 +56,9 @@ semver-check baseline="" release_type="minor":
 release-plan:
     bash scripts/release.sh --dry-run
 
+release-test:
+    bash tests/release_plan.sh
+
 size:
     bash scripts/pr-size-gate.sh
 
@@ -65,5 +68,6 @@ ci:
     just test-doc
     just doc-check
     just package-check
+    just release-test
     just audit
     just msrv
