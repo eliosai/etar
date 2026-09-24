@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [simulation, walltime]
+        mode: [simulation]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 40
     steps:
