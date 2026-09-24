@@ -10,9 +10,9 @@ separate bounded-memory test for sink streaming and backpressure.
 
 Use `just bench-build` and `just bench-run` for a local CodSpeed simulation.
 Repeat with `walltime` and `memory` modes. A local CodSpeed login is required.
-CI runs simulation on Blacksmith. Run walltime locally and compare identical
-workloads, modes, toolchains, and runner classes. Keep a performance change
-only when correctness holds and the measured gain pays for its complexity.
+CI does not run benchmarks. Compare identical workloads, modes, toolchains,
+and runner classes. Keep a performance change only when correctness holds and
+the measured gain pays for its complexity.
 
 The main costs to watch are one extra EOF probe per written file, one
 512-byte header check per read entry, zstd decode/encode, and output

@@ -39,9 +39,10 @@ All dependencies are declared in `[workspace.dependencies]` and inherited by
 members. Benchmark imports use the `divan` alias for
 `codspeed-divan-compat`. Do not add regular `divan` or Criterion.
 
-Measure before optimizing. Use local CodSpeed Divan runs, compare simulation
-and walltime, and keep a change only when correctness holds and the measured
-gain justifies the complexity. CI uses Blacksmith, not CodSpeed macro runners.
+Measure before optimizing. Run CodSpeed Divan benchmarks locally in simulation
+and walltime. Keep a change only when correctness holds and the measured gain
+justifies the complexity. CI runs checks on Blacksmith and does not run
+benchmarks. Do not use CodSpeed Macro Runners.
 
 Production paths return typed errors and never use `unwrap`, `expect` or
 `panic`. Keep functions short, split files by behavior, and keep comments
