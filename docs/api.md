@@ -30,9 +30,9 @@ non-numeric PAX `mtime` is `Error::Malformed`.
 name. `Meta::with_xattr` sets one. The writer emits each as a PAX
 `SCHILY.xattr.<name>=<value>` record in a PAX header entry ahead of the entry,
 and entries without attributes get no PAX header. `WriteEntry::file` and
-`WriteEntry::metadata` return `Error::InvalidXattr` for an empty name, a name
-containing `=` or NUL, or an empty value, because the PAX parser underneath
-cannot read an empty value back. The reader surfaces `SCHILY.xattr.*` records
+`WriteEntry::metadata` return `Error::InvalidXattr` for an empty name or a name
+containing `=` or NUL. PAX reads an empty value as a deletion, so the writer
+leaves out an attribute whose value is empty. The reader surfaces `SCHILY.xattr.*` records
 and `LIBARCHIVE.xattr.<percent-encoded name>=<base64 value>` records; other PAX
 keys are ignored, and a malformed encoding is `Error::Malformed`.
 

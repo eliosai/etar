@@ -84,8 +84,8 @@ impl Meta {
 
     /// Set one extended attribute, replacing any value under the same name
     ///
-    /// The writer rejects an empty name, a name holding `=` or NUL, and an
-    /// empty value with `Error::InvalidXattr`.
+    /// The writer rejects an empty name or a name holding `=` or NUL with
+    /// `Error::InvalidXattr`, and leaves out an attribute with an empty value.
     pub fn with_xattr(mut self, name: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
         self.xattrs.insert(name.into(), value.into());
         self
