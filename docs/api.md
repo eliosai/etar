@@ -37,7 +37,9 @@ and `LIBARCHIVE.xattr.<percent-encoded name>=<base64 value>` records; other PAX
 keys are ignored, and a malformed encoding is `Error::Malformed`.
 
 `WriteEntry::file` requires `Kind::File`, a declared size, and a finite body.
-`WriteEntry::metadata` accepts a directory or link and has no body. The
+`WriteEntry::metadata` accepts a directory, link, device, or fifo and has no
+body. It returns `Error::InvalidDevice` for a device major or minor number
+above 2097151, the most a header's seven octal digits hold. The
 writer checks for both short and surplus file bytes. A failed append poisons
 the writer; `finish` then returns `Error::Aborted`. Cancelling an in-progress
 append also poisons it. Dropping an unfinished
@@ -64,9 +66,13 @@ decompression ratio. The decoded-byte cap includes tar headers
 and padding. The ratio guard starts after 8 MiB of decoded output. Links
 may be disabled independently. Extension size is checked before the parser
 buffers its payload. Tighten these limits to match the caller's workload.
-Regular files, directories, symlinks, and hardlinks are supported. Device,
-sparse, and global PAX entries are rejected. Directory and link entries with
-nonzero body lengths are rejected.
+Regular files, directories, symlinks, and hardlinks are supported. Character
+devices, block devices, and fifos surface as `Kind::CharDevice`,
+`Kind::BlockDevice`, and `Kind::Fifo` only under
+`ReadLimits::with_special_files(true)`; by default they are
+`Error::DisallowedEntryType`. Sparse and global PAX entries are rejected.
+Directory, link, device, and fifo entries with nonzero body lengths are
+rejected.
 
 Transport failures remain `Error::Io` with their original I/O kind. Header
 and trailer failures are `Error::Malformed`; unsafe paths and limit breaches

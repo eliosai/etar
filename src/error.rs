@@ -45,6 +45,9 @@ pub enum Error {
     /// An extended attribute has an empty or unrepresentable name or an empty value
     #[error("invalid extended attribute")]
     InvalidXattr,
+    /// A device major or minor number does not fit its tar header field
+    #[error("device number must be at most 2097151")]
+    InvalidDevice,
     /// The mtime nanoseconds are one billion or more
     #[error("mtime nanoseconds must be below 1000000000")]
     InvalidMtimeNanos,

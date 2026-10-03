@@ -65,6 +65,7 @@ impl WriteEntry<tokio::io::Empty> {
             return Err(Error::InvalidEntryKind);
         }
         pax::check(&meta)?;
+        pack::check_device(&meta.kind)?;
         Ok(Self {
             inner: PackEntry {
                 path,

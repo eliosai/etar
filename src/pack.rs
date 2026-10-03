@@ -3,6 +3,7 @@
 use crate::entry::{Kind, Meta, SafePath};
 use crate::error::Error;
 use crate::pax;
+use crate::settings::device::MAX_NUMBER;
 use crate::settings::pax::HEADER_PATH;
 use pin_project_lite::pin_project;
 use std::path::{Path, PathBuf};
@@ -82,7 +83,37 @@ where
             )
             .await
         }
+        Kind::CharDevice { major, minor } => {
+            set_device(&mut header, major, minor)?;
+            append_meta(builder, &mut header, path.as_path(), EntryType::Char, None).await
+        }
+        Kind::BlockDevice { major, minor } => {
+            set_device(&mut header, major, minor)?;
+            append_meta(builder, &mut header, path.as_path(), EntryType::Block, None).await
+        }
+        Kind::Fifo => {
+            append_meta(builder, &mut header, path.as_path(), EntryType::Fifo, None).await
+        }
     }
+}
+
+/// Refuse a device number its seven-digit octal header field cannot hold
+pub fn check_device(kind: &Kind) -> Result<(), Error> {
+    match kind {
+        Kind::CharDevice { major, minor } | Kind::BlockDevice { major, minor }
+            if *major > MAX_NUMBER || *minor > MAX_NUMBER =>
+        {
+            Err(Error::InvalidDevice)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Write a device's major and minor numbers into its header
+fn set_device(header: &mut Header, major: u32, minor: u32) -> Result<(), Error> {
+    header.set_device_major(major)?;
+    header.set_device_minor(minor)?;
+    Ok(())
 }
 
 /// Emit the PAX header entry preceding an entry that needs one

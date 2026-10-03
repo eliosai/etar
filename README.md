@@ -43,7 +43,9 @@ publish a sink after `Writer::append` or `Writer::finish` fails.
 
 `Meta` carries Unix extended attributes as PAX `SCHILY.xattr.*` records, and
 the reader also accepts libarchive's `LIBARCHIVE.xattr.*` form. Sub-second
-mtime travels as a PAX `mtime` record.
+mtime travels as a PAX `mtime` record. Character devices, block devices, and
+fifos are written with their device numbers and read only when
+`ReadLimits::with_special_files(true)` allows them.
 
 `EntryPath` rejects absolute and parent components, NUL bytes, and empty
 names. Non-UTF-8 Unix path bytes are preserved. Link targets are returned as
