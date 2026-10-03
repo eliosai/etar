@@ -42,7 +42,7 @@ pub enum Error {
     /// The archive was malformed
     #[error("malformed archive")]
     Malformed,
-    /// An extended attribute has an empty or unrepresentable name or an empty value
+    /// An extended attribute has an empty or unrepresentable name
     #[error("invalid extended attribute")]
     InvalidXattr,
     /// A device major or minor number does not fit its tar header field
