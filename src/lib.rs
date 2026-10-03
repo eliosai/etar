@@ -10,6 +10,7 @@ mod pack;
 mod reader;
 mod settings;
 mod writer;
+mod zstd;
 
 #[doc(inline)]
 pub use entry::SafePath as EntryPath;
@@ -23,3 +24,5 @@ pub use limits::SecurityLimits as ReadLimits;
 pub use reader::{EntryHeader, ReadEntry, Reader, ValidationReport, validate};
 #[doc(inline)]
 pub use writer::{Format, WriteEntry, WriteOutput, Writer};
+#[doc(inline)]
+pub use zstd::Zstd;

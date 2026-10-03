@@ -1,10 +1,13 @@
 use bytes::Bytes;
 use divan::Bencher;
-use etar::{EntryPath, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer, validate};
+use etar::{EntryPath, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer, Zstd, validate};
 use std::io::Cursor;
 
 const SIZES: &[usize] = &[4096, 262_144, 4_194_304];
 const ENTRY_COUNTS: &[usize] = &[100, 1_000];
+const ZSTD_PAYLOAD: usize = 32 * 1024 * 1024;
+/// Level and worker pairs: single-threaded against four workers
+const ZSTD_OPTIONS: &[(i32, u32)] = &[(1, 0), (1, 4), (3, 0), (3, 4)];
 
 fn main() {
     divan::main();
@@ -31,8 +34,27 @@ fn payload(size: usize) -> Bytes {
     )
 }
 
+/// Text-like bytes that zstd compresses by roughly three to one
+fn compressible(size: usize) -> Bytes {
+    let mut value = 0x9e37_79b9u32;
+    let mut out = Vec::with_capacity(size + 8);
+    while out.len() < size {
+        value ^= value << 13;
+        value ^= value >> 17;
+        value ^= value << 5;
+        out.extend_from_slice(
+            format!("key{:04} = value{};\n", value % 4096, value % 97).as_bytes(),
+        );
+    }
+    out.truncate(size);
+    Bytes::from(out)
+}
+
 async fn write_archive(bytes: Bytes, format: Format) -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), format);
+    write_with(Writer::new(Vec::new(), format), bytes).await
+}
+
+async fn write_with(mut writer: Writer<Vec<u8>>, bytes: Bytes) -> Vec<u8> {
     let path = EntryPath::new("objects/payload.bin").expect("static path");
     let meta = Meta::new(0o644, 1000, 1000, 0, Kind::File);
     let entry =
@@ -95,6 +117,20 @@ fn write_zstd(bencher: Bencher, size: usize) {
     let bytes = payload(size);
     bencher.bench_local(|| {
         let output = rt.block_on(write_archive(bytes.clone(), Format::TarZstd));
+        divan::black_box(output.len())
+    });
+}
+
+#[divan::bench(args = ZSTD_OPTIONS)]
+fn write_zstd_options(bencher: Bencher, options: &(i32, u32)) {
+    let rt = runtime();
+    let bytes = compressible(ZSTD_PAYLOAD);
+    let zstd = Zstd::new(options.0, options.1).expect("zstd options");
+    bencher.bench_local(|| {
+        let output = rt.block_on(async {
+            let writer = Writer::with_zstd(Vec::new(), zstd);
+            write_with(writer, bytes.clone()).await
+        });
         divan::black_box(output.len())
     });
 }

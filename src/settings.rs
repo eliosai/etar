@@ -25,3 +25,14 @@ pub mod open {
     /// Output below which the compression-ratio guard stays silent
     pub const RATIO_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
 }
+
+pub mod zstd {
+    /// Slowest-to-largest level zstd accepts for output (fastest negative level)
+    pub const MIN_LEVEL: i32 = -131_072;
+    /// Strongest level zstd accepts
+    pub const MAX_LEVEL: i32 = 22;
+    /// Level zstd uses when the caller chooses none
+    pub const DEFAULT_LEVEL: i32 = 3;
+    /// Most compression worker threads zstd supports
+    pub const MAX_WORKERS: u32 = 256;
+}

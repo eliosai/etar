@@ -16,7 +16,8 @@ remaining decoded stream and checks the second end block and zero padding.
 input ceilings. `guard` checks raw tar header sizes before the parser can
 allocate an extension buffer. `open` contains the bounded body and byte
 meters; `compress` selects the decoder. `pack` emits one tar entry, while
-`writer` controls format and finalization.
+`writer` controls format and finalization, and `zstd` checks the compression
+level and worker count it builds the encoder with.
 
 The `object_store` adapter test lives in `tests/`. The AFL target feeds
 bounded input to `validate`. Divan benchmarks exercise the public reader,
