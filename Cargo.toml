@@ -15,7 +15,7 @@ license = "MIT"
 etar = { path = ".", version = "0.1.0" }
 afl = "0.18.2"
 astral-tokio-tar = "0.6.2"
-async-compression = { version = "0.4.42", default-features = false, features = ["tokio", "zstd"] }
+async-compression = { version = "0.4.42", default-features = false, features = ["tokio", "zstd", "zstdmt"] }
 bytes = "1.11"
 divan = { package = "codspeed-divan-compat", version = "5.0.2" }
 dhat = "0.3"

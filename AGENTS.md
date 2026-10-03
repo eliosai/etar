@@ -12,6 +12,7 @@ integration test, not part of the library's dependency graph.
 - `src/guard.rs` caps extension records before the parser buffers them
 - `src/open.rs` owns bounded body and byte meters
 - `src/writer.rs` owns output format and finalization
+- `src/zstd.rs` owns checked zstd level and worker options
 - `src/pack.rs` encodes one tar entry
 - `tests/` exercises only the public crate interface; `fuzz/` owns AFL targets
 - `benches/` owns CodSpeed Divan benchmarks
