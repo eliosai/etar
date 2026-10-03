@@ -16,6 +16,8 @@ pub struct Meta {
     pub gid: u32,
     /// Modification time in seconds since the unix epoch
     pub mtime_unix_secs: u64,
+    /// Nanoseconds past `mtime_unix_secs`, below one billion
+    pub mtime_nanos: u32,
     /// What kind of entry this is
     pub kind: Kind,
     /// Extended attributes by name, ordered by name bytes
@@ -50,9 +52,18 @@ impl Meta {
             uid,
             gid,
             mtime_unix_secs,
+            mtime_nanos: 0,
             kind,
             xattrs: BTreeMap::new(),
         }
+    }
+
+    /// Set the nanoseconds past `mtime_unix_secs`
+    ///
+    /// The writer rejects one billion or more with `Error::InvalidMtimeNanos`.
+    pub fn with_mtime_nanos(mut self, nanos: u32) -> Self {
+        self.mtime_nanos = nanos;
+        self
     }
 
     /// Set one extended attribute, replacing any value under the same name
