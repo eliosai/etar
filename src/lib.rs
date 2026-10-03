@@ -7,9 +7,11 @@ mod guard;
 mod limits;
 mod open;
 mod pack;
+mod pax;
 mod reader;
 mod settings;
 mod writer;
+mod xattr;
 mod zstd;
 
 #[doc(inline)]

@@ -2,7 +2,7 @@
 
 use crate::settings::open::{
     DEFAULT_MAX_ENTRIES, DEFAULT_MAX_ENTRY_BYTES, DEFAULT_MAX_METADATA_BYTES, DEFAULT_MAX_PATH_LEN,
-    DEFAULT_MAX_RATIO, DEFAULT_MAX_TOTAL_BYTES,
+    DEFAULT_MAX_RATIO, DEFAULT_MAX_TOTAL_BYTES, DEFAULT_MAX_XATTR_BYTES,
 };
 
 /// Caps an untrusted archive must respect while opening
@@ -31,6 +31,8 @@ pub struct SecurityLimits {
     pub max_path_len: usize,
     /// Largest individual GNU or PAX metadata record buffered by the parser
     pub max_metadata_bytes: u64,
+    /// Largest total extended-attribute bytes, names plus values, on one entry
+    pub max_xattr_bytes: u64,
     /// Largest uncompressed-to-compressed ratio before a bomb is suspected
     pub max_compression_ratio: u64,
     /// Whether symlink entries are surfaced rather than rejected
@@ -47,6 +49,7 @@ impl Default for SecurityLimits {
             max_entry_bytes: DEFAULT_MAX_ENTRY_BYTES,
             max_path_len: DEFAULT_MAX_PATH_LEN,
             max_metadata_bytes: DEFAULT_MAX_METADATA_BYTES,
+            max_xattr_bytes: DEFAULT_MAX_XATTR_BYTES,
             max_compression_ratio: DEFAULT_MAX_RATIO,
             allow_symlinks: true,
             allow_hardlinks: true,
@@ -82,6 +85,12 @@ impl SecurityLimits {
     /// Set the GNU/PAX metadata record ceiling
     pub fn with_max_metadata_bytes(mut self, max: u64) -> Self {
         self.max_metadata_bytes = max;
+        self
+    }
+
+    /// Set the per-entry extended-attribute byte ceiling
+    pub fn with_max_xattr_bytes(mut self, max: u64) -> Self {
+        self.max_xattr_bytes = max;
         self
     }
 
