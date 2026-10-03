@@ -86,8 +86,8 @@ pub struct WriteOutput<W> {
 }
 
 enum Inner<W: AsyncWrite + Unpin + Send + 'static> {
-    Tar(Builder<Counted<W>>),
-    TarZstd(Builder<ZstdEncoder<Counted<W>>>),
+    Tar(Builder<Deferred<Counted<W>>>),
+    TarZstd(Builder<Deferred<ZstdEncoder<Counted<W>>>>),
 }
 
 /// Sequential archive writer; call `finish` to finalize the tar and zstd trailers
@@ -143,7 +143,7 @@ where
     /// Begin a tar or tar.zst archive on the caller-owned sink
     pub fn new(sink: W, format: Format) -> Self {
         match format {
-            Format::Tar => Self::from_inner(Inner::Tar(Builder::new(Counted::new(sink)))),
+            Format::Tar => Self::from_inner(Inner::Tar(Builder::new(Deferred(Counted::new(sink))))),
             Format::TarZstd => Self::with_zstd(sink, Zstd::default()),
         }
     }
@@ -151,7 +151,7 @@ where
     /// Begin a tar.zst archive with a chosen zstd level and worker count
     pub fn with_zstd(sink: W, zstd: Zstd) -> Self {
         let encoder = zstd.encoder(Counted::new(sink));
-        Self::from_inner(Inner::TarZstd(Builder::new(encoder)))
+        Self::from_inner(Inner::TarZstd(Builder::new(Deferred(encoder))))
     }
 
     fn from_inner(inner: Inner<W>) -> Self {
@@ -190,12 +190,12 @@ where
         }
         let sink = match self.inner {
             Inner::Tar(builder) => {
-                let mut sink = builder.into_inner().await?;
+                let mut sink = builder.into_inner().await?.0;
                 sink.shutdown().await?;
                 sink
             }
             Inner::TarZstd(builder) => {
-                let mut encoder = builder.into_inner().await?;
+                let mut encoder = builder.into_inner().await?.0;
                 encoder.shutdown().await?;
                 encoder.into_inner()
             }
@@ -240,5 +240,27 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for Counted<W> {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// A sink that ignores the flush the tar builder issues after each entry body, so zstd keeps one
+/// block stream across entries; `finish` shuts it down instead
+struct Deferred<W>(W);
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for Deferred<W> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
     }
 }
