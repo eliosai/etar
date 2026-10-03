@@ -68,6 +68,24 @@ async fn file_dir_and_symlink_xattrs_round_trip() {
 }
 
 #[tokio::test]
+async fn an_empty_value_is_written_as_no_record() {
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::Dir)
+        .with_xattr("user.empty", Vec::new())
+        .with_xattr("user.name", b"etar".to_vec());
+    let only = Meta::new(0o644, 0, 0, 0, Kind::Dir).with_xattr("user.empty", Vec::new());
+    let kept: Xattrs = [(b"user.name".to_vec(), b"etar".to_vec())].into();
+    for format in [Format::Tar, Format::TarZstd] {
+        let archive = write(format, vec![("d", meta.clone()), ("e", only.clone())]).await;
+        let got = read_xattrs(archive, ReadLimits::default())
+            .await
+            .expect("read");
+        assert_eq!(got, vec![kept.clone(), Xattrs::new()]);
+    }
+    let plain = write(Format::Tar, vec![("e", only)]).await;
+    assert!(!String::from_utf8_lossy(&plain).contains("SCHILY"));
+}
+
+#[tokio::test]
 async fn writer_emits_schily_records_in_name_order() {
     let archive = write(Format::Tar, vec![("f", sample(Kind::File))]).await;
     let text = String::from_utf8_lossy(&archive);
@@ -150,7 +168,6 @@ async fn unrepresentable_xattrs_are_rejected_at_construction() {
         ("", b"v".to_vec()),
         ("user.a=b", b"v".to_vec()),
         ("user.a\0b", b"v".to_vec()),
-        ("user.empty", Vec::new()),
     ];
     for (name, value) in cases {
         let meta = Meta::new(0o644, 0, 0, 0, Kind::Dir).with_xattr(name, value);

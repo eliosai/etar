@@ -33,7 +33,7 @@ pub fn encode(meta: &Meta) -> Vec<u8> {
         let value = format!("{}.{:09}", meta.mtime_unix_secs, meta.mtime_nanos);
         push_record(&mut body, MTIME.as_bytes(), value.as_bytes());
     }
-    for (name, value) in &meta.xattrs {
+    for (name, value) in meta.xattrs.iter().filter(|(_, value)| !value.is_empty()) {
         let key = [SCHILY_XATTR, name.as_slice()].concat();
         push_record(&mut body, &key, value);
     }

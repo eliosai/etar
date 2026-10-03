@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 /// Reject attributes the SCHILY encoding cannot carry back
 pub fn check(meta: &Meta) -> Result<(), Error> {
-    for (name, value) in &meta.xattrs {
-        if name.is_empty() || name.iter().any(|byte| matches!(byte, 0 | b'=')) || value.is_empty() {
+    for name in meta.xattrs.keys() {
+        if name.is_empty() || name.iter().any(|byte| matches!(byte, 0 | b'=')) {
             return Err(Error::InvalidXattr);
         }
     }
