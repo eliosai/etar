@@ -41,6 +41,9 @@ tar end blocks, trailing padding, and compressed frames; use `validate` when
 no entry data is needed. A read, write, or cancelled archive operation aborts it. Never
 publish a sink after `Writer::append` or `Writer::finish` fails.
 
+`Meta` carries Unix extended attributes as PAX `SCHILY.xattr.*` records, and
+the reader also accepts libarchive's `LIBARCHIVE.xattr.*` form.
+
 `EntryPath` rejects absolute and parent components, NUL bytes, and empty
 names. Non-UTF-8 Unix path bytes are preserved. Link targets are returned as
 untrusted metadata. Validate each target against your destination root before

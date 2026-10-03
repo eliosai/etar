@@ -20,6 +20,8 @@ pub mod open {
     pub const DEFAULT_MAX_PATH_LEN: usize = 4096;
     /// Default maximum size of a GNU or PAX metadata record
     pub const DEFAULT_MAX_METADATA_BYTES: u64 = 1024 * 1024;
+    /// Default total extended-attribute bytes (names plus values) per entry
+    pub const DEFAULT_MAX_XATTR_BYTES: u64 = 64 * 1024;
     /// Default uncompressed-to-compressed ratio ceiling
     pub const DEFAULT_MAX_RATIO: u64 = 200;
     /// Output below which the compression-ratio guard stays silent
@@ -35,4 +37,13 @@ pub mod zstd {
     pub const DEFAULT_LEVEL: i32 = 3;
     /// Most compression worker threads zstd supports
     pub const MAX_WORKERS: u32 = 256;
+}
+
+pub mod pax {
+    /// PAX key prefix GNU tar and star use for an extended attribute
+    pub const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";
+    /// PAX key prefix libarchive uses, with a percent-encoded name and base64 value
+    pub const LIBARCHIVE_XATTR: &[u8] = b"LIBARCHIVE.xattr.";
+    /// Path of the PAX header entry preceding an entry
+    pub const HEADER_PATH: &str = "././@PaxHeader";
 }

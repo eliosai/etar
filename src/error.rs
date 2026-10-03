@@ -42,6 +42,9 @@ pub enum Error {
     /// The archive was malformed
     #[error("malformed archive")]
     Malformed,
+    /// An extended attribute has an empty or unrepresentable name or an empty value
+    #[error("invalid extended attribute")]
+    InvalidXattr,
     /// The zstd level is outside zstd's supported range
     #[error("zstd level {0} is outside -131072..=22")]
     InvalidZstdLevel(i32),

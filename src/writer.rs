@@ -3,6 +3,7 @@
 use crate::entry::{Kind, Meta, SafePath};
 use crate::error::Error;
 use crate::pack::{self, PackEntry};
+use crate::xattr;
 use crate::zstd::Zstd;
 use async_compression::tokio::write::ZstdEncoder;
 use std::pin::Pin;
@@ -45,6 +46,7 @@ impl<B: AsyncRead + Unpin + Send> WriteEntry<B> {
         if !matches!(meta.kind, Kind::File) {
             return Err(Error::InvalidEntryKind);
         }
+        xattr::check(&meta)?;
         Ok(Self {
             inner: PackEntry {
                 path,
@@ -62,6 +64,7 @@ impl WriteEntry<tokio::io::Empty> {
         if matches!(meta.kind, Kind::File) {
             return Err(Error::InvalidEntryKind);
         }
+        xattr::check(&meta)?;
         Ok(Self {
             inner: PackEntry {
                 path,

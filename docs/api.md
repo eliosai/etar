@@ -17,6 +17,16 @@ zstd threads, which pays off for large archives. `Writer::new(sink,
 Format::TarZstd)` uses `Zstd::default()`, level 3 with no workers. Any level
 or worker count produces a standard zstd frame that `Reader` opens.
 
+`Meta::xattrs` holds extended attributes, name bytes to value bytes, ordered by
+name. `Meta::with_xattr` sets one. The writer emits each as a PAX
+`SCHILY.xattr.<name>=<value>` record in a PAX header entry ahead of the entry,
+and entries without attributes get no PAX header. `WriteEntry::file` and
+`WriteEntry::metadata` return `Error::InvalidXattr` for an empty name, a name
+containing `=` or NUL, or an empty value, because the PAX parser underneath
+cannot read an empty value back. The reader surfaces `SCHILY.xattr.*` records
+and `LIBARCHIVE.xattr.<percent-encoded name>=<base64 value>` records; other PAX
+keys are ignored, and a malformed encoding is `Error::Malformed`.
+
 `WriteEntry::file` requires `Kind::File`, a declared size, and a finite body.
 `WriteEntry::metadata` accepts a directory or link and has no body. The
 writer checks for both short and surplus file bytes. A failed append poisons
@@ -40,7 +50,8 @@ Validate them against your destination root before creating links.
 
 `ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of
 decoded tar bytes, 1 MiB per GNU/PAX extension record, 4096 path bytes,
-and a 200:1 decompression ratio. The decoded-byte cap includes tar headers
+64 KiB of extended attribute names and values per entry, and a 200:1
+decompression ratio. The decoded-byte cap includes tar headers
 and padding. The ratio guard starts after 8 MiB of decoded output. Links
 may be disabled independently. Extension size is checked before the parser
 buffers its payload. Tighten these limits to match the caller's workload.

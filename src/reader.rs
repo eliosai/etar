@@ -169,7 +169,7 @@ impl Reader {
         };
         match next {
             Some(Ok(entry)) => {
-                let accepted = self.accept(entry).map(Some);
+                let accepted = self.accept(entry).await.map(Some);
                 if accepted.is_ok() {
                     abort.complete();
                 }
@@ -199,12 +199,15 @@ impl Reader {
         self.decoded.load(Ordering::Relaxed)
     }
 
-    fn accept(&mut self, entry: tokio_tar::Entry<Archive<Source>>) -> Result<ReadEntry<'_>, Error> {
+    async fn accept(
+        &mut self,
+        entry: tokio_tar::Entry<Archive<Source>>,
+    ) -> Result<ReadEntry<'_>, Error> {
         self.seen += 1;
         if self.seen > self.limits.max_entries {
             return Err(Error::LimitExceeded("max_entries"));
         }
-        let inner = open_entry(entry, &self.limits)?;
+        let inner = open_entry(entry, &self.limits).await?;
         Ok(ReadEntry {
             inner,
             failed: self.body_failed.clone(),

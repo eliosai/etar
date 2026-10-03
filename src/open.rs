@@ -3,6 +3,7 @@
 use crate::entry::{Kind, Meta, SafePath};
 use crate::error::Error;
 use crate::limits::SecurityLimits;
+use crate::pax;
 use crate::settings::open::RATIO_FLOOR_BYTES;
 use pin_project_lite::pin_project;
 use std::io;
@@ -36,7 +37,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for OpenEntry<R> {
 }
 
 /// Validate one entry and wrap its body with the byte bounds
-pub fn open_entry<R>(entry: Entry<R>, limits: &SecurityLimits) -> Result<OpenEntry<R>, Error>
+pub async fn open_entry<R>(
+    mut entry: Entry<R>,
+    limits: &SecurityLimits,
+) -> Result<OpenEntry<R>, Error>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -49,7 +53,7 @@ where
     if size_bytes > limits.max_entry_bytes {
         return Err(Error::LimitExceeded("max_entry_bytes"));
     }
-    let meta = read_meta(&entry, kind)?;
+    let meta = read_meta(&mut entry, limits, kind).await?;
     let body = Bounded::new(entry, limits.max_entry_bytes);
     Ok(OpenEntry {
         path,
@@ -99,10 +103,15 @@ where
 }
 
 /// Read the entry's unix metadata from its header
-fn read_meta<R>(entry: &Entry<R>, kind: Kind) -> Result<Meta, Error>
+async fn read_meta<R>(
+    entry: &mut Entry<R>,
+    limits: &SecurityLimits,
+    kind: Kind,
+) -> Result<Meta, Error>
 where
     R: AsyncRead + Unpin,
 {
+    let xattrs = pax::read_xattrs(entry, limits).await?;
     let header = entry.header();
     Ok(Meta {
         mode: header.mode().map_err(|_| Error::Malformed)?,
@@ -110,6 +119,7 @@ where
         gid: small_id(header.gid().map_err(|_| Error::Malformed)?)?,
         mtime_unix_secs: header.mtime().map_err(|_| Error::Malformed)?,
         kind,
+        xattrs,
     })
 }
 
