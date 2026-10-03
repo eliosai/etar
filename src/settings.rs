@@ -39,6 +39,11 @@ pub mod zstd {
     pub const MAX_WORKERS: u32 = 256;
 }
 
+pub mod device {
+    /// Largest major or minor number a seven-digit octal header field holds
+    pub const MAX_NUMBER: u32 = 0o7_777_777;
+}
+
 pub mod pax {
     /// PAX key prefix GNU tar and star use for an extended attribute
     pub const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";

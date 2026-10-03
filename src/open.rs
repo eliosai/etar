@@ -89,6 +89,13 @@ where
         EntryType::Link if limits.allow_hardlinks => {
             link(entry).map(|target| Kind::Hardlink { target })
         }
+        EntryType::Char if limits.allow_special_files => {
+            device(entry).map(|(major, minor)| Kind::CharDevice { major, minor })
+        }
+        EntryType::Block if limits.allow_special_files => {
+            device(entry).map(|(major, minor)| Kind::BlockDevice { major, minor })
+        }
+        EntryType::Fifo if limits.allow_special_files => Ok(Kind::Fifo),
         _ => Err(Error::DisallowedEntryType),
     }
 }
@@ -100,6 +107,17 @@ where
 {
     let name = entry.link_name().map_err(|_| Error::Malformed)?;
     Ok(name.ok_or(Error::Malformed)?.into_owned())
+}
+
+/// Read a device entry's major and minor numbers
+fn device<R>(entry: &Entry<R>) -> Result<(u32, u32), Error>
+where
+    R: AsyncRead + Unpin,
+{
+    let header = entry.header();
+    let major = header.device_major().map_err(|_| Error::Malformed)?;
+    let minor = header.device_minor().map_err(|_| Error::Malformed)?;
+    major.zip(minor).ok_or(Error::Malformed)
 }
 
 /// Read the entry's unix metadata from its header

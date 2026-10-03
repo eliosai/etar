@@ -39,6 +39,8 @@ pub struct SecurityLimits {
     pub allow_symlinks: bool,
     /// Whether hardlink entries are surfaced rather than rejected
     pub allow_hardlinks: bool,
+    /// Whether device and fifo entries are surfaced rather than rejected
+    pub allow_special_files: bool,
 }
 
 impl Default for SecurityLimits {
@@ -53,6 +55,7 @@ impl Default for SecurityLimits {
             max_compression_ratio: DEFAULT_MAX_RATIO,
             allow_symlinks: true,
             allow_hardlinks: true,
+            allow_special_files: false,
         }
     }
 }
@@ -109,6 +112,12 @@ impl SecurityLimits {
     /// Set whether hardlinks are surfaced
     pub fn with_hardlinks(mut self, allow: bool) -> Self {
         self.allow_hardlinks = allow;
+        self
+    }
+
+    /// Set whether device and fifo entries are surfaced
+    pub fn with_special_files(mut self, allow: bool) -> Self {
+        self.allow_special_files = allow;
         self
     }
 }

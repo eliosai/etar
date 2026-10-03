@@ -50,7 +50,7 @@ impl<R> HeaderGuard<R> {
         let kind = self.header[156];
         if !matches!(
             kind,
-            0 | b'0' | b'1' | b'2' | b'5' | b'7' | b'x' | b'L' | b'K'
+            0 | b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'x' | b'L' | b'K'
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
