@@ -3,6 +3,7 @@
 use crate::entry::{Kind, Meta, SafePath};
 use crate::error::Error;
 use crate::pack::{self, PackEntry};
+use crate::zstd::Zstd;
 use async_compression::tokio::write::ZstdEncoder;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -137,14 +138,19 @@ where
 {
     /// Begin a tar or tar.zst archive on the caller-owned sink
     pub fn new(sink: W, format: Format) -> Self {
-        let sink = Counted {
-            inner: sink,
-            bytes: 0,
-        };
-        let inner = match format {
-            Format::Tar => Inner::Tar(Builder::new(sink)),
-            Format::TarZstd => Inner::TarZstd(Builder::new(ZstdEncoder::new(sink))),
-        };
+        match format {
+            Format::Tar => Self::from_inner(Inner::Tar(Builder::new(Counted::new(sink)))),
+            Format::TarZstd => Self::with_zstd(sink, Zstd::default()),
+        }
+    }
+
+    /// Begin a tar.zst archive with a chosen zstd level and worker count
+    pub fn with_zstd(sink: W, zstd: Zstd) -> Self {
+        let encoder = zstd.encoder(Counted::new(sink));
+        Self::from_inner(Inner::TarZstd(Builder::new(encoder)))
+    }
+
+    fn from_inner(inner: Inner<W>) -> Self {
         Self {
             inner,
             failed: false,
@@ -200,6 +206,12 @@ where
 struct Counted<W> {
     inner: W,
     bytes: u64,
+}
+
+impl<W> Counted<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, bytes: 0 }
+    }
 }
 
 impl<W: AsyncWrite + Unpin> AsyncWrite for Counted<W> {

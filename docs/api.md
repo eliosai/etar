@@ -5,8 +5,17 @@ The public operations use the same entry vocabulary:
 | Operation | Input | Completion |
 | --- | --- | --- |
 | `Writer::new(sink, format)` | An `AsyncWrite` sink and `Tar` or `TarZstd` | `finish()` returns the finalized sink and encoded byte count |
+| `Writer::with_zstd(sink, zstd)` | An `AsyncWrite` sink and a checked `Zstd` | Writes tar.zst at that level and worker count; `finish()` completes it |
 | `Reader::open(source, limits)` | An `AsyncRead` source | `next_entry()` yields one borrowed body; `Ok(None)` means the whole archive passed trailer validation |
 | `validate(source, limits)` | An `AsyncRead` source | Returns entry and byte counts after consuming every body and the trailer |
+
+`Zstd::new(level, workers)` accepts levels `-131072..=22` (`0` selects zstd's
+default) and `0..=256` workers; anything else returns
+`Error::InvalidZstdLevel` or `Error::InvalidZstdWorkers`. Zero workers
+compress on the calling task. A positive count hands compression to that many
+zstd threads, which pays off for large archives. `Writer::new(sink,
+Format::TarZstd)` uses `Zstd::default()`, level 3 with no workers. Any level
+or worker count produces a standard zstd frame that `Reader` opens.
 
 `WriteEntry::file` requires `Kind::File`, a declared size, and a finite body.
 `WriteEntry::metadata` accepts a directory or link and has no body. The
