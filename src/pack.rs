@@ -2,6 +2,8 @@
 
 use crate::entry::{Kind, Meta, SafePath};
 use crate::error::Error;
+use crate::pax;
+use crate::settings::pax::HEADER_PATH;
 use pin_project_lite::pin_project;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -46,6 +48,7 @@ where
     if !matches!(&meta.kind, Kind::File) && (size != 0 || body.is_some()) {
         return Err(Error::NonFilePayload);
     }
+    append_pax(builder, &meta).await?;
     let mut header = base_header(&meta);
     match meta.kind {
         Kind::File => append_file(builder, &mut header, path.as_path(), size, body).await,
@@ -80,6 +83,25 @@ where
             .await
         }
     }
+}
+
+/// Emit the PAX header entry preceding an entry that needs one
+async fn append_pax<W>(builder: &mut Builder<W>, meta: &Meta) -> Result<(), Error>
+where
+    W: AsyncWrite + Unpin + Send,
+{
+    let body = pax::encode(meta);
+    if body.is_empty() {
+        return Ok(());
+    }
+    let mut header = Header::new_ustar();
+    header.set_entry_type(EntryType::XHeader);
+    header.set_path(HEADER_PATH)?;
+    header.set_mode(0o644);
+    header.set_size(body.len() as u64);
+    header.set_cksum();
+    builder.append(&header, &body[..]).await?;
+    Ok(())
 }
 
 /// Stream a file body of exactly `size` bytes into the archive
@@ -204,6 +226,7 @@ mod tests {
             gid: 0,
             mtime_unix_secs: 0,
             kind,
+            xattrs: Default::default(),
         }
     }
 
@@ -328,6 +351,7 @@ mod tests {
             gid: 5678,
             mtime_unix_secs: 1_700_000_000,
             kind: Kind::File,
+            xattrs: Default::default(),
         };
         let entry = PackEntry {
             path: SafePath::new("bin/sh").unwrap(),

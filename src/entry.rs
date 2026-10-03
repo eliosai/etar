@@ -1,6 +1,7 @@
 //! Filesystem entry vocabulary shared by pack and open
 
 use crate::error::Error;
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 /// Unix metadata describing one archive entry
@@ -17,6 +18,8 @@ pub struct Meta {
     pub mtime_unix_secs: u64,
     /// What kind of entry this is
     pub kind: Kind,
+    /// Extended attributes by name, ordered by name bytes
+    pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 /// The kind of an archive entry
@@ -48,7 +51,17 @@ impl Meta {
             gid,
             mtime_unix_secs,
             kind,
+            xattrs: BTreeMap::new(),
         }
+    }
+
+    /// Set one extended attribute, replacing any value under the same name
+    ///
+    /// The writer rejects an empty name, a name holding `=` or NUL, and an
+    /// empty value with `Error::InvalidXattr`.
+    pub fn with_xattr(mut self, name: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
+        self.xattrs.insert(name.into(), value.into());
+        self
     }
 }
 
