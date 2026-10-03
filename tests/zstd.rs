@@ -73,6 +73,38 @@ async fn higher_level_compresses_smaller() {
     assert!(slow.len() <= fast.len());
 }
 
+async fn small_files(format: Format) -> Vec<u8> {
+    let mut writer = Writer::new(Vec::new(), format);
+    for n in 0..1000 {
+        let path = EntryPath::new(format!("d/file-{n:05}")).expect("path");
+        let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+        let body = b"a small body every file repeats".to_vec();
+        let size = body.len() as u64;
+        let entry = WriteEntry::file(path, meta, size, Cursor::new(body)).expect("file");
+        writer.append(entry).await.expect("append");
+    }
+    writer.finish().await.expect("finish").sink
+}
+
+#[tokio::test]
+async fn many_small_files_compress_like_one_stream_of_the_tar() {
+    use async_compression::tokio::write::ZstdEncoder;
+    use tokio::io::AsyncWriteExt;
+    let mut whole = ZstdEncoder::new(Vec::new());
+    whole
+        .write_all(&small_files(Format::Tar).await)
+        .await
+        .expect("write");
+    whole.shutdown().await.expect("shutdown");
+    let (whole, archive) = (whole.into_inner(), small_files(Format::TarZstd).await);
+    assert!(
+        archive.len() <= whole.len() * 2,
+        "{} bytes against {} for one stream",
+        archive.len(),
+        whole.len()
+    );
+}
+
 #[test]
 fn out_of_range_level_is_a_typed_error() {
     assert!(matches!(Zstd::new(23, 0), Err(Error::InvalidZstdLevel(23))));
