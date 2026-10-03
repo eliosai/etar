@@ -42,6 +42,22 @@ pub enum Kind {
         /// Untrusted in-archive target; etar never resolves or materializes it
         target: PathBuf,
     },
+    /// A character device
+    CharDevice {
+        /// Device major number
+        major: u32,
+        /// Device minor number
+        minor: u32,
+    },
+    /// A block device
+    BlockDevice {
+        /// Device major number
+        major: u32,
+        /// Device minor number
+        minor: u32,
+    },
+    /// A named pipe
+    Fifo,
 }
 
 impl Meta {
