@@ -17,6 +17,15 @@ zstd threads, which pays off for large archives. `Writer::new(sink,
 Format::TarZstd)` uses `Zstd::default()`, level 3 with no workers. Any level
 or worker count produces a standard zstd frame that `Reader` opens.
 
+`Meta::mtime_nanos` holds the nanoseconds past `mtime_unix_secs` and must stay
+below one billion; `Meta::with_mtime_nanos` sets it, and the writer returns
+`Error::InvalidMtimeNanos` otherwise. The writer emits a PAX
+`mtime=<secs>.<9-digit nanos>` record only for a non-zero fraction, so
+whole-second entries keep the plain tar layout. The reader prefers a PAX
+`mtime`, with or without a fraction of any digit count (extra digits beyond
+nine are dropped), and falls back to the ustar header mtime. A negative or
+non-numeric PAX `mtime` is `Error::Malformed`.
+
 `Meta::xattrs` holds extended attributes, name bytes to value bytes, ordered by
 name. `Meta::with_xattr` sets one. The writer emits each as a PAX
 `SCHILY.xattr.<name>=<value>` record in a PAX header entry ahead of the entry,

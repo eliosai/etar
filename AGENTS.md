@@ -14,7 +14,8 @@ integration test, not part of the library's dependency graph.
 - `src/writer.rs` owns output format and finalization
 - `src/zstd.rs` owns checked zstd level and worker options
 - `src/pack.rs` encodes one tar entry
-- `src/pax.rs` encodes and reads PAX records; `src/xattr.rs` checks and decodes xattrs
+- `src/pax.rs` encodes and reads PAX records; `src/xattr.rs` checks and decodes xattrs;
+  `src/mtime.rs` parses PAX mtime values
 - `tests/` exercises only the public crate interface; `fuzz/` owns AFL targets
 - `benches/` owns CodSpeed Divan benchmarks
 

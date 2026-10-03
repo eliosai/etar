@@ -111,15 +111,20 @@ async fn read_meta<R>(
 where
     R: AsyncRead + Unpin,
 {
-    let xattrs = pax::read_xattrs(entry, limits).await?;
+    let extras = pax::read(entry, limits).await?;
     let header = entry.header();
+    let (secs, nanos) = match extras.mtime {
+        Some(mtime) => mtime,
+        None => (header.mtime().map_err(|_| Error::Malformed)?, 0),
+    };
     Ok(Meta {
         mode: header.mode().map_err(|_| Error::Malformed)?,
         uid: small_id(header.uid().map_err(|_| Error::Malformed)?)?,
         gid: small_id(header.gid().map_err(|_| Error::Malformed)?)?,
-        mtime_unix_secs: header.mtime().map_err(|_| Error::Malformed)?,
+        mtime_unix_secs: secs,
+        mtime_nanos: nanos,
         kind,
-        xattrs,
+        xattrs: extras.xattrs,
     })
 }
 

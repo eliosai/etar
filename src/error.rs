@@ -45,6 +45,9 @@ pub enum Error {
     /// An extended attribute has an empty or unrepresentable name or an empty value
     #[error("invalid extended attribute")]
     InvalidXattr,
+    /// The mtime nanoseconds are one billion or more
+    #[error("mtime nanoseconds must be below 1000000000")]
+    InvalidMtimeNanos,
     /// The zstd level is outside zstd's supported range
     #[error("zstd level {0} is outside -131072..=22")]
     InvalidZstdLevel(i32),

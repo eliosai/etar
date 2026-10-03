@@ -44,6 +44,12 @@ pub mod pax {
     pub const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";
     /// PAX key prefix libarchive uses, with a percent-encoded name and base64 value
     pub const LIBARCHIVE_XATTR: &[u8] = b"LIBARCHIVE.xattr.";
+    /// PAX key holding a modification time with an optional fraction
+    pub const MTIME: &str = "mtime";
+    /// Nanoseconds in one second
+    pub const NANOS_PER_SEC: u32 = 1_000_000_000;
+    /// Fraction digits in a nanosecond count
+    pub const NANOS_DIGITS: usize = 9;
     /// Path of the PAX header entry preceding an entry
     pub const HEADER_PATH: &str = "././@PaxHeader";
 }
