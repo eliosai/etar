@@ -4,7 +4,8 @@ use etar::{EntryPath, Error, Format, Kind, Meta, ReadLimits, Reader, WriteEntry,
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use tokio::io::AsyncReadExt;
-use tokio_tar::{Builder, EntryType, Header};
+mod common;
+use common::{pax_record, pax_tar};
 
 type Xattrs = BTreeMap<Vec<u8>, Vec<u8>>;
 
@@ -86,47 +87,11 @@ async fn entry_without_xattrs_carries_no_pax_header() {
     assert_eq!(archive.len(), 512 + 512 + 1024);
 }
 
-fn libarchive_record(key: &str, value: &str) -> Vec<u8> {
-    let body = format!(" {key}={value}\n");
-    let mut digits = 1;
-    let len = loop {
-        let total = body.len() + digits;
-        if total.to_string().len() == digits {
-            break total;
-        }
-        digits += 1;
-    };
-    format!("{len}{body}").into_bytes()
-}
-
-async fn libarchive_tar(records: Vec<u8>) -> Vec<u8> {
-    let mut builder = Builder::new(Vec::new());
-    let mut pax = Header::new_ustar();
-    pax.set_entry_type(EntryType::XHeader);
-    pax.set_path("PaxHeader/f").expect("pax path");
-    pax.set_mode(0o644);
-    pax.set_size(records.len() as u64);
-    pax.set_cksum();
-    builder.append(&pax, &records[..]).await.expect("pax");
-    let mut file = Header::new_gnu();
-    file.set_entry_type(EntryType::Regular);
-    file.set_mode(0o644);
-    file.set_uid(0);
-    file.set_gid(0);
-    file.set_mtime(0);
-    file.set_size(2);
-    builder
-        .append_data(&mut file, "f", &b"hi"[..])
-        .await
-        .expect("file");
-    builder.into_inner().await.expect("finish")
-}
-
 #[tokio::test]
-async fn libarchive_records_decode_name_and_value() {
-    let mut records = libarchive_record("LIBARCHIVE.xattr.user.a%20b%3Dc", "AAH//g==");
-    records.extend(libarchive_record("SCHILY.xattr.user.plain", "text"));
-    let archive = libarchive_tar(records).await;
+async fn pax_records_decode_name_and_value() {
+    let mut records = pax_record("LIBARCHIVE.xattr.user.a%20b%3Dc", "AAH//g==");
+    records.extend(pax_record("SCHILY.xattr.user.plain", "text"));
+    let archive = pax_tar(records, 0).await;
     let got = read_xattrs(archive, ReadLimits::default())
         .await
         .expect("read");
@@ -137,7 +102,7 @@ async fn libarchive_records_decode_name_and_value() {
 }
 
 #[tokio::test]
-async fn malformed_libarchive_records_are_malformed() {
+async fn malformed_pax_records_are_malformed() {
     for (key, value) in [
         ("LIBARCHIVE.xattr.user.a%2", "AAH//g=="),
         ("LIBARCHIVE.xattr.user.a", "AAH//g="),
@@ -145,7 +110,7 @@ async fn malformed_libarchive_records_are_malformed() {
         ("LIBARCHIVE.xattr.", "AAH//g=="),
         ("LIBARCHIVE.xattr.user.a%00b", "AAH//g=="),
     ] {
-        let archive = libarchive_tar(libarchive_record(key, value)).await;
+        let archive = pax_tar(pax_record(key, value), 0).await;
         let result = read_xattrs(archive, ReadLimits::default()).await;
         assert!(matches!(result, Err(Error::Malformed)), "{key} {value}");
     }
@@ -201,12 +166,9 @@ async fn unrepresentable_xattrs_are_rejected_at_construction() {
 async fn libarchive_base64_handles_every_padding_length() {
     let mut records = Vec::new();
     for (name, value) in [("one", "QQ=="), ("two", "QUI="), ("three", "QUJD")] {
-        records.extend(libarchive_record(
-            &format!("LIBARCHIVE.xattr.user.{name}"),
-            value,
-        ));
+        records.extend(pax_record(&format!("LIBARCHIVE.xattr.user.{name}"), value));
     }
-    let archive = libarchive_tar(records).await;
+    let archive = pax_tar(records, 0).await;
     let got = read_xattrs(archive, ReadLimits::default())
         .await
         .expect("read");

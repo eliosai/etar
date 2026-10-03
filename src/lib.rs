@@ -5,6 +5,7 @@ mod entry;
 mod error;
 mod guard;
 mod limits;
+mod mtime;
 mod open;
 mod pack;
 mod pax;

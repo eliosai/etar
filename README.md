@@ -42,7 +42,8 @@ no entry data is needed. A read, write, or cancelled archive operation aborts it
 publish a sink after `Writer::append` or `Writer::finish` fails.
 
 `Meta` carries Unix extended attributes as PAX `SCHILY.xattr.*` records, and
-the reader also accepts libarchive's `LIBARCHIVE.xattr.*` form.
+the reader also accepts libarchive's `LIBARCHIVE.xattr.*` form. Sub-second
+mtime travels as a PAX `mtime` record.
 
 `EntryPath` rejects absolute and parent components, NUL bytes, and empty
 names. Non-UTF-8 Unix path bytes are preserved. Link targets are returned as

@@ -225,6 +225,7 @@ mod tests {
             uid: 0,
             gid: 0,
             mtime_unix_secs: 0,
+            mtime_nanos: 0,
             kind,
             xattrs: Default::default(),
         }
@@ -350,6 +351,7 @@ mod tests {
             uid: 1234,
             gid: 5678,
             mtime_unix_secs: 1_700_000_000,
+            mtime_nanos: 0,
             kind: Kind::File,
             xattrs: Default::default(),
         };
