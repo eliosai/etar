@@ -35,8 +35,8 @@ pub struct WriteEntry<B> {
     pub(crate) meta: Meta,
     /// The body length, which the body must yield exactly
     pub(crate) size: u64,
-    /// The body bytes for a file, absent for other kinds
-    pub(crate) body: Option<B>,
+    /// The body bytes, empty for every kind but a file
+    pub(crate) body: B,
 }
 
 impl<B: AsyncRead + Unpin + Send> WriteEntry<B> {
@@ -50,7 +50,7 @@ impl<B: AsyncRead + Unpin + Send> WriteEntry<B> {
             path,
             meta,
             size,
-            body: Some(body),
+            body,
         })
     }
 }
@@ -67,7 +67,7 @@ impl WriteEntry<tokio::io::Empty> {
             path,
             meta,
             size: 0,
-            body: None,
+            body: tokio::io::empty(),
         })
     }
 }
@@ -104,25 +104,6 @@ pub struct Writer<W: AsyncWrite + Unpin + Send + 'static> {
     failed: bool,
 }
 
-struct AbortOnDrop<'a> {
-    failed: &'a mut bool,
-    armed: bool,
-}
-
-impl AbortOnDrop<'_> {
-    fn complete(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for AbortOnDrop<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            *self.failed = true;
-        }
-    }
-}
-
 impl<W> Writer<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
@@ -153,17 +134,12 @@ where
         if self.failed {
             return Err(Error::Aborted);
         }
-        let abort = AbortOnDrop {
-            failed: &mut self.failed,
-            armed: true,
-        };
+        self.failed = true;
         let result = match &mut self.inner {
             Inner::Tar(builder) => pack::append(builder, entry).await,
             Inner::TarZstd(builder) => pack::append(builder, entry).await,
         };
-        if result.is_ok() {
-            abort.complete();
-        }
+        self.failed = result.is_err();
         result
     }
 

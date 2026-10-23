@@ -18,11 +18,8 @@ pub enum Error {
     /// The path contains a NUL byte
     #[error("nul byte in path")]
     NulPath,
-    /// A file entry arrived without a body
-    #[error("missing file body")]
-    MissingBody,
-    /// A non-file entry carried a body or nonzero size
-    #[error("non-file entry has a body or nonzero size")]
+    /// A non-file archive entry declared a nonzero size
+    #[error("non-file entry has a nonzero size")]
     NonFilePayload,
     /// The constructor received metadata for another entry kind
     #[error("entry kind does not match constructor")]

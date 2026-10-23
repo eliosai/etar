@@ -25,6 +25,23 @@ async fn writer_and_reader_round_trip_one_file() {
     assert!(reader.next_entry().await.expect("end").is_none());
 }
 
+#[tokio::test]
+async fn metadata_round_trips() {
+    let meta = Meta::new(0o4755, 1234, 5678, 1_700_000_000, Kind::File)
+        .with_mtime_nanos(5)
+        .with_xattr("user.a", b"v".to_vec());
+    let path = EntryPath::new("bin/sh").expect("path");
+    let mut writer = Writer::tar(Vec::new());
+    let file = WriteEntry::file(path, meta.clone(), 3, Cursor::new(b"abc")).expect("file");
+    writer.append(file).await.expect("append");
+    let output = writer.finish().await.expect("finish");
+    let mut reader = Reader::open(Cursor::new(output), ReadLimits::default())
+        .await
+        .expect("reader");
+    let entry = reader.next_entry().await.expect("entry").expect("file");
+    assert_eq!(entry.header().meta, &meta);
+}
+
 async fn archive(zstd: bool, body: &[u8]) -> Vec<u8> {
     let mut writer = common::writer(zstd);
     let path = EntryPath::new("data/file").expect("path");
