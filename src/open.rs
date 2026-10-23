@@ -24,6 +24,9 @@ where
 {
     let path = EntryPath::new(within(&entry.path().map_err(malformed)?, limits)?)?;
     let kind = classify(entry, limits)?;
+    if !matches!(kind, Kind::Dir) && path.components().next().is_none() {
+        return Err(Error::Malformed);
+    }
     let size = entry.header().size().map_err(malformed)?;
     if !matches!(kind, Kind::File) && size != 0 {
         return Err(Error::NonFilePayload);

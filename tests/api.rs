@@ -303,3 +303,44 @@ async fn pax_gnu_sparse_members_are_disallowed() {
         assert!(matches!(got, Err(Error::DisallowedEntryType)), "{got:?}");
     }
 }
+
+async fn root_named(path: &str, kind: tokio_tar::EntryType) -> Vec<u8> {
+    let mut builder = tokio_tar::Builder::new(Vec::new());
+    let mut header = tokio_tar::Header::new_gnu();
+    header.set_entry_type(kind);
+    header.set_size(0);
+    header.set_mode(0o755);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    if kind == tokio_tar::EntryType::Symlink {
+        header.set_link_name("target").expect("link target");
+    }
+    builder
+        .append_data(&mut header, path, &b""[..])
+        .await
+        .expect("entry");
+    builder.into_inner().await.expect("archive")
+}
+
+#[tokio::test]
+async fn only_a_directory_may_name_the_root() {
+    use tokio_tar::EntryType;
+    for path in [".", "./"] {
+        let dir = root_named(path, EntryType::Directory).await;
+        assert_eq!(
+            common::drain(dir, ReadLimits::default())
+                .await
+                .expect("dir"),
+            1
+        );
+        for kind in [EntryType::Regular, EntryType::Symlink, EntryType::Fifo] {
+            let archive = root_named(path, kind).await;
+            let got = common::drain(archive, ReadLimits::default()).await;
+            assert!(
+                matches!(got, Err(Error::Malformed)),
+                "{path} {kind:?}: {got:?}"
+            );
+        }
+    }
+}
