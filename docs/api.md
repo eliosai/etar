@@ -52,15 +52,15 @@ Validate them against your destination root before creating links. The writer
 stores a target longer than the 100-byte ustar field in a PAX `linkpath`
 record.
 
-`ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of
-decoded tar bytes, 4096 path bytes, and 64 KiB of extended attribute names and
-values per entry. The decoded-byte cap includes tar headers and padding. Every
-GNU or PAX extension record stops at 1 MiB, checked before the parser buffers
-its payload. Regular files, directories, symlinks, hardlinks, character
-devices, block devices, and fifos surface as their `Kind`. Sparse members,
-including PAX `GNU.sparse.*` records, global PAX headers, and other entry types
-are `Error::DisallowedEntryType`. Directory, link,
-device, and fifo entries with nonzero body lengths are rejected.
+`ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of decoded
+tar bytes, 4096 bytes per entry path or link target, and 64 KiB of extended
+attribute names and values per entry. The decoded-byte cap includes tar headers
+and padding. Every GNU or PAX extension record stops at 1 MiB, checked before
+the parser buffers its payload. Regular files, directories, symlinks,
+hardlinks, character devices, block devices, and fifos surface as their `Kind`.
+Sparse members, including PAX `GNU.sparse.*` records, global PAX headers, and
+other entry types are `Error::DisallowedEntryType`. Directory, link, device,
+and fifo entries with nonzero body lengths are rejected.
 
 Transport failures remain `Error::Io` with their original I/O kind. Header
 and trailer failures are `Error::Malformed`; unsafe paths and limit breaches

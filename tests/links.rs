@@ -1,6 +1,6 @@
 //! Symlink and hardlink targets at the public reader and writer
 
-use etar::{EntryPath, Kind, Meta, ReadLimits, Reader, WriteEntry};
+use etar::{EntryPath, Error, Kind, Meta, ReadLimits, Reader, WriteEntry};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::process::Command;
@@ -41,14 +41,18 @@ async fn write_links(zstd: bool) -> Vec<u8> {
 }
 
 async fn read_kinds(archive: Vec<u8>) -> Vec<Kind> {
-    let mut reader = Reader::open(Cursor::new(archive), ReadLimits::default())
+    read_limited(archive, ReadLimits::default())
         .await
-        .expect("reader");
+        .expect("read")
+}
+
+async fn read_limited(archive: Vec<u8>, limits: ReadLimits) -> Result<Vec<Kind>, Error> {
+    let mut reader = Reader::open(Cursor::new(archive), limits).await?;
     let mut kinds = Vec::new();
-    while let Some(entry) = reader.next_entry().await.expect("next") {
+    while let Some(entry) = reader.next_entry().await? {
         kinds.push(entry.header().meta.kind.clone());
     }
-    kinds
+    Ok(kinds)
 }
 
 #[tokio::test]
@@ -97,4 +101,22 @@ async fn a_target_that_fits_the_header_needs_no_pax_record() {
     assert_eq!(archive[156], b'2');
     assert_eq!(archive.len(), 512 + 1024);
     assert_eq!(read_kinds(archive).await, [kind]);
+}
+
+#[tokio::test]
+async fn a_link_target_over_max_path_len_is_refused() {
+    for (max_path_len, accepted) in [(149, false), (150, true)] {
+        let limits = ReadLimits {
+            max_path_len,
+            ..ReadLimits::default()
+        };
+        let got = read_limited(write_links(false).await, limits).await;
+        match accepted {
+            true => assert_eq!(got.expect("read").len(), 2),
+            false => assert!(
+                matches!(got, Err(Error::LimitExceeded("max_path_len"))),
+                "{got:?}"
+            ),
+        }
+    }
 }
