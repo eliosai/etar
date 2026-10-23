@@ -1,6 +1,7 @@
 //! Compression sniffing and transparent decode for opened archives
 
-use crate::settings::compression::{BUF_CAP, PEEK_LEN, ZSTD_MAGIC};
+use crate::settings::compression::{BUF_CAP, PEEK_LEN, WINDOW_LOG_MAX, ZSTD_MAGIC};
+use async_compression::{tokio::bufread::ZstdDecoder, zstd::DParameter};
 use std::io::Cursor;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
@@ -20,22 +21,13 @@ where
     }
     let replay = Cursor::new(magic[..seen].to_vec()).chain(src);
     let buf = BufReader::with_capacity(BUF_CAP, replay);
-    Ok(wrap(&magic[..seen], buf))
-}
-
-/// Select the decoder for the magic, wrapping the still-buffered reader
-fn wrap<R>(magic: &[u8], buf: BufReader<R>) -> Box<dyn AsyncRead + Unpin + Send>
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    use async_compression::tokio::bufread::ZstdDecoder;
-    if magic.starts_with(&ZSTD_MAGIC) {
-        let mut decoder = ZstdDecoder::new(buf);
-        decoder.multiple_members(true);
-        Box::new(decoder)
-    } else {
-        Box::new(buf)
+    if !magic[..seen].starts_with(&ZSTD_MAGIC) {
+        return Ok(Box::new(buf));
     }
+    let window = [DParameter::window_log_max(WINDOW_LOG_MAX)];
+    let mut decoder = ZstdDecoder::with_params(buf, &window);
+    decoder.multiple_members(true);
+    Ok(Box::new(decoder))
 }
 
 #[cfg(test)]

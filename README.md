@@ -39,7 +39,8 @@ cancelled archive operation aborts it. Never publish a sink after
 `Writer::append` or `Writer::finish` fails.
 
 `Writer::tar` writes a plain tar and `Writer::tar_zst` writes one zstd frame at
-level 3. `Meta` carries Unix extended attributes as PAX `SCHILY.xattr.*`
+level 3. `Reader` refuses a zstd window over 16 MiB as `Error::Malformed`, which
+rules out large `zstd --long` and `--ultra -20` through `-22` archives. `Meta` carries Unix extended attributes as PAX `SCHILY.xattr.*`
 records. Sub-second mtime travels as a PAX `mtime` record. Character devices,
 block devices, and fifos carry their device numbers.
 

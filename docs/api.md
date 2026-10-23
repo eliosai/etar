@@ -41,12 +41,15 @@ size. Its `AsyncRead` implementation streams the body. Dropping an unread
 body lets the reader skip it on the next call. A body read error poisons the
 reader. `Reader` confirms completion after it checks both tar end blocks,
 trailing padding, and the zstd decoder.
-The zstd decoder accepts consecutive frames but rejects trailing garbage.
+The zstd decoder accepts consecutive frames but rejects trailing garbage. It
+refuses any frame whose window exceeds 16 MiB as `Error::Malformed`; `zstd
+--long` and `--ultra -20` through `-22` write such frames for large inputs.
 Cancelling `next_entry()` poisons the reader because parser progress may be
 partial.
 
 `EntryPath::new` rejects empty, absolute, parent-ascending, or NUL-bearing
-paths. It preserves non-UTF-8 bytes on Unix. `.` names the in-tree root.
+paths. It preserves non-UTF-8 bytes on Unix. `.` names the in-tree root, and
+the reader refuses a non-directory entry at the root as `Error::Malformed`.
 Treat link targets in `Kind::Symlink` and `Kind::Hardlink` as untrusted bytes.
 Validate them against your destination root before creating links. The writer
 stores a target longer than the 100-byte ustar field in a PAX `linkpath`

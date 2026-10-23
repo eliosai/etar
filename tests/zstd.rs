@@ -93,3 +93,42 @@ async fn many_small_files_compress_like_one_stream_of_the_tar() {
         whole.len()
     );
 }
+
+async fn zstd_with_window(window_log: i32, bytes: &[u8]) -> Vec<u8> {
+    use async_compression::{Level, tokio::write::ZstdEncoder, zstd::CParameter};
+    use tokio::io::AsyncWriteExt;
+    let params = [CParameter::window_log(window_log as u32)];
+    let mut encoder = ZstdEncoder::with_quality_and_params(Vec::new(), Level::Default, &params);
+    encoder.write_all(bytes).await.expect("write");
+    encoder.shutdown().await.expect("shutdown");
+    encoder.into_inner()
+}
+
+#[tokio::test]
+async fn a_window_above_16_mib_is_refused_before_decoding() {
+    let tar = small_files(false).await;
+    let wide = zstd_with_window(25, &tar).await;
+    let result = common::drain(wide, ReadLimits::default()).await;
+    assert!(matches!(result, Err(etar::Error::Malformed)), "{result:?}");
+    let fits = zstd_with_window(24, &tar).await;
+    assert_eq!(
+        common::drain(fits, ReadLimits::default())
+            .await
+            .expect("read"),
+        1000
+    );
+}
+
+#[tokio::test]
+async fn a_later_frame_above_16_mib_is_refused() {
+    let padding = [0u8; 1024];
+    for (window_log, accepted) in [(24, true), (25, false)] {
+        let mut archive = small_files(true).await;
+        archive.extend(zstd_with_window(window_log, &padding).await);
+        let result = common::drain(archive, ReadLimits::default()).await;
+        match accepted {
+            true => assert_eq!(result.expect("read"), 1000),
+            false => assert!(matches!(result, Err(etar::Error::Malformed)), "{result:?}"),
+        }
+    }
+}
