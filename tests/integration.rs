@@ -78,11 +78,21 @@ async fn object_store_round_trip() {
     let mut reader = Reader::open(source, ReadLimits::default())
         .await
         .expect("reader");
-    let mut paths = Vec::new();
+    let mut entries = Vec::new();
     while let Some(entry) = reader.next_entry().await.expect("next") {
-        paths.push(read_entry(entry).await.0);
+        let (path, kind, _) = read_entry(entry).await;
+        entries.push((path, kind));
     }
-    assert_eq!(paths, ["etc/hosts", "usr", "usr/bin/app", "usr/bin/python"]);
+    let python = Kind::Symlink {
+        target: "/usr/bin/python3".into(),
+    };
+    let want = [
+        ("etc/hosts", Kind::File),
+        ("usr", Kind::Dir),
+        ("usr/bin/app", Kind::File),
+        ("usr/bin/python", python),
+    ];
+    assert_eq!(entries, want.map(|(path, kind)| (path.to_owned(), kind)));
 }
 
 #[tokio::test]
