@@ -41,7 +41,7 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let path = validate_path(&entry, limits)?;
-    let kind = classify(&entry)?;
+    let kind = classify(&entry, limits)?;
     let size_bytes = entry.header().size().map_err(|_| Error::Malformed)?;
     if !matches!(&kind, Kind::File) && size_bytes != 0 {
         return Err(Error::NonFilePayload);
@@ -72,15 +72,15 @@ where
 }
 
 /// Map the tar entry type to a kind, rejecting dangerous types
-fn classify<R>(entry: &Entry<R>) -> Result<Kind, Error>
+fn classify<R>(entry: &Entry<R>, limits: &ReadLimits) -> Result<Kind, Error>
 where
     R: AsyncRead + Unpin,
 {
     match entry.header().entry_type() {
         EntryType::Regular | EntryType::Continuous => Ok(Kind::File),
         EntryType::Directory => Ok(Kind::Dir),
-        EntryType::Symlink => link(entry).map(|target| Kind::Symlink { target }),
-        EntryType::Link => link(entry).map(|target| Kind::Hardlink { target }),
+        EntryType::Symlink => link(entry, limits).map(|target| Kind::Symlink { target }),
+        EntryType::Link => link(entry, limits).map(|target| Kind::Hardlink { target }),
         EntryType::Char => device(entry).map(|(major, minor)| Kind::CharDevice { major, minor }),
         EntryType::Block => device(entry).map(|(major, minor)| Kind::BlockDevice { major, minor }),
         EntryType::Fifo => Ok(Kind::Fifo),
@@ -88,13 +88,17 @@ where
     }
 }
 
-/// Read a link entry's untrusted target
-fn link<R>(entry: &Entry<R>) -> Result<PathBuf, Error>
+/// Read a link entry's untrusted target, bounded by the path length limit
+fn link<R>(entry: &Entry<R>, limits: &ReadLimits) -> Result<PathBuf, Error>
 where
     R: AsyncRead + Unpin,
 {
     let name = entry.link_name().map_err(|_| Error::Malformed)?;
-    Ok(name.ok_or(Error::Malformed)?.into_owned())
+    let target = name.ok_or(Error::Malformed)?;
+    if target.as_os_str().len() > limits.max_path_len {
+        return Err(Error::LimitExceeded("max_path_len"));
+    }
+    Ok(target.into_owned())
 }
 
 /// Read a device entry's major and minor numbers

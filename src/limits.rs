@@ -26,7 +26,7 @@ pub struct ReadLimits {
     pub max_total_bytes: u64,
     /// Largest bytes in one entry body
     pub max_entry_bytes: u64,
-    /// Largest entry-path length in bytes
+    /// Largest entry-path or link-target length in bytes
     pub max_path_len: usize,
     /// Largest total extended-attribute bytes, names plus values, on one entry
     pub max_xattr_bytes: u64,
