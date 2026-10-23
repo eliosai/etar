@@ -42,4 +42,8 @@ pub mod pax {
     pub const NANOS_DIGITS: usize = 9;
     /// Path of the PAX header entry preceding an entry
     pub const HEADER_PATH: &str = "././@PaxHeader";
+    /// PAX key holding a link target too long for the ustar header
+    pub const LINKPATH: &str = "linkpath";
+    /// Bytes the ustar linkname field holds
+    pub const USTAR_LINK_LEN: usize = 100;
 }

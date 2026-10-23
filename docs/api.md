@@ -48,7 +48,9 @@ partial.
 `EntryPath::new` rejects empty, absolute, parent-ascending, or NUL-bearing
 paths. It preserves non-UTF-8 bytes on Unix. `.` names the in-tree root.
 Treat link targets in `Kind::Symlink` and `Kind::Hardlink` as untrusted bytes.
-Validate them against your destination root before creating links.
+Validate them against your destination root before creating links. The writer
+stores a target longer than the 100-byte ustar field in a PAX `linkpath`
+record.
 
 `ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of
 decoded tar bytes, 4096 path bytes, and 64 KiB of extended attribute names and
