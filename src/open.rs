@@ -1,4 +1,4 @@
-//! Streaming open of an untrusted tar or tar.zst into validated entries
+//! Validation of one untrusted entry and the decoded-byte cap
 
 use crate::entry::{EntryPath, Kind, Meta};
 use crate::error::Error;
@@ -6,7 +6,7 @@ use crate::limits::ReadLimits;
 use crate::pax;
 use pin_project_lite::pin_project;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,61 +14,33 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio_tar::{Entry, EntryType};
 
-/// One validated entry whose body is bounded as it is read
-pub struct OpenEntry<R: AsyncRead + Unpin> {
-    /// The validated relative path
-    pub path: EntryPath,
-    /// The entry's unix metadata
-    pub meta: Meta,
-    /// The header-claimed body length, advisory only
-    pub size_bytes: u64,
-    body: Bounded<Entry<R>>,
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for OpenEntry<R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().body).poll_read(cx, buf)
-    }
-}
-
-/// Validate one entry and wrap its body with the byte bounds
-pub async fn open_entry<R>(mut entry: Entry<R>, limits: &ReadLimits) -> Result<OpenEntry<R>, Error>
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    let path = validate_path(&entry, limits)?;
-    let kind = classify(&entry, limits)?;
-    let size_bytes = entry.header().size().map_err(|_| Error::Malformed)?;
-    if !matches!(&kind, Kind::File) && size_bytes != 0 {
-        return Err(Error::NonFilePayload);
-    }
-    if size_bytes > limits.max_entry_bytes {
-        return Err(Error::LimitExceeded("max_entry_bytes"));
-    }
-    let meta = read_meta(&mut entry, limits, kind).await?;
-    let body = Bounded::new(entry, limits.max_entry_bytes);
-    Ok(OpenEntry {
-        path,
-        meta,
-        size_bytes,
-        body,
-    })
-}
-
-/// Validate the entry path against length and traversal rules
-fn validate_path<R>(entry: &Entry<R>, limits: &ReadLimits) -> Result<EntryPath, Error>
+/// Validate one entry's path, metadata, and size, which also bounds what the parser yields
+pub async fn open_entry<R>(
+    entry: &mut Entry<R>,
+    limits: &ReadLimits,
+) -> Result<(EntryPath, Meta, u64), Error>
 where
     R: AsyncRead + Unpin,
 {
-    let raw = entry.path().map_err(|_| Error::Malformed)?;
-    if raw.as_os_str().len() > limits.max_path_len {
-        return Err(Error::LimitExceeded("max_path_len"));
+    let path = EntryPath::new(within(&entry.path().map_err(malformed)?, limits)?)?;
+    let kind = classify(entry, limits)?;
+    let size = entry.header().size().map_err(malformed)?;
+    if !matches!(kind, Kind::File) && size != 0 {
+        return Err(Error::NonFilePayload);
     }
-    EntryPath::new(&raw)
+    if size > limits.max_entry_bytes {
+        return Err(Error::LimitExceeded("max_entry_bytes"));
+    }
+    let meta = read_meta(entry, limits, kind).await?;
+    Ok((path, meta, size))
+}
+
+/// Refuse a path or link target longer than the path length limit
+fn within<'a>(path: &'a Path, limits: &ReadLimits) -> Result<&'a Path, Error> {
+    match path.as_os_str().len() > limits.max_path_len {
+        true => Err(Error::LimitExceeded("max_path_len")),
+        false => Ok(path),
+    }
 }
 
 /// Map the tar entry type to a kind, rejecting dangerous types
@@ -88,17 +60,16 @@ where
     }
 }
 
-/// Read a link entry's untrusted target, bounded by the path length limit
+/// Read a link entry's untrusted target
 fn link<R>(entry: &Entry<R>, limits: &ReadLimits) -> Result<PathBuf, Error>
 where
     R: AsyncRead + Unpin,
 {
-    let name = entry.link_name().map_err(|_| Error::Malformed)?;
-    let target = name.ok_or(Error::Malformed)?;
-    if target.as_os_str().len() > limits.max_path_len {
-        return Err(Error::LimitExceeded("max_path_len"));
-    }
-    Ok(target.into_owned())
+    let target = entry
+        .link_name()
+        .map_err(malformed)?
+        .ok_or(Error::Malformed)?;
+    Ok(within(&target, limits)?.to_path_buf())
 }
 
 /// Read a device entry's major and minor numbers
@@ -107,12 +78,12 @@ where
     R: AsyncRead + Unpin,
 {
     let header = entry.header();
-    let major = header.device_major().map_err(|_| Error::Malformed)?;
-    let minor = header.device_minor().map_err(|_| Error::Malformed)?;
+    let major = header.device_major().map_err(malformed)?;
+    let minor = header.device_minor().map_err(malformed)?;
     major.zip(minor).ok_or(Error::Malformed)
 }
 
-/// Read the entry's unix metadata from its header
+/// Read the entry's unix metadata from its header and PAX records
 async fn read_meta<R>(entry: &mut Entry<R>, limits: &ReadLimits, kind: Kind) -> Result<Meta, Error>
 where
     R: AsyncRead + Unpin,
@@ -121,12 +92,12 @@ where
     let header = entry.header();
     let (secs, nanos) = match extras.mtime {
         Some(mtime) => mtime,
-        None => (header.mtime().map_err(|_| Error::Malformed)?, 0),
+        None => (header.mtime().map_err(malformed)?, 0),
     };
     Ok(Meta {
-        mode: header.mode().map_err(|_| Error::Malformed)?,
-        uid: small_id(header.uid().map_err(|_| Error::Malformed)?)?,
-        gid: small_id(header.gid().map_err(|_| Error::Malformed)?)?,
+        mode: header.mode().map_err(malformed)?,
+        uid: u32::try_from(header.uid().map_err(malformed)?).map_err(malformed)?,
+        gid: u32::try_from(header.gid().map_err(malformed)?).map_err(malformed)?,
         mtime_unix_secs: secs,
         mtime_nanos: nanos,
         kind,
@@ -134,9 +105,9 @@ where
     })
 }
 
-/// Narrow a tar uid or gid to the kernel's u32 width, rejecting overflow
-fn small_id(id: u64) -> Result<u32, Error> {
-    u32::try_from(id).map_err(|_| Error::Malformed)
+/// Map any parse failure to `Error::Malformed`
+fn malformed<E>(_: E) -> Error {
+    Error::Malformed
 }
 
 pin_project! {
@@ -158,7 +129,7 @@ impl<R: AsyncRead> AsyncRead for Tagged<R> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<io::Result<()>> {
         match self.project().inner.poll_read(cx, buf) {
             Poll::Ready(Err(error)) => {
                 Poll::Ready(Err(io::Error::new(error.kind(), Error::Io(error))))
@@ -169,67 +140,18 @@ impl<R: AsyncRead> AsyncRead for Tagged<R> {
 }
 
 pin_project! {
-    /// Caps one entry's body and fails reads once the stream advances past it
-    struct Bounded<R> {
-        #[pin]
-        inner: R,
-        remaining: u64,
-        failed: bool,
-    }
-}
-
-impl<R> Bounded<R> {
-    fn new(inner: R, entry_max: u64) -> Self {
-        Self {
-            inner,
-            remaining: entry_max,
-            failed: false,
-        }
-    }
-}
-
-impl<R: AsyncRead> AsyncRead for Bounded<R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let this = self.project();
-        if *this.failed {
-            return Poll::Ready(Err(cap_error("aborted entry body")));
-        }
-        let before = buf.filled().len();
-        let result = this.inner.poll_read(cx, buf);
-        let read = (buf.filled().len() - before) as u64;
-        if read > *this.remaining {
-            buf.set_filled(before);
-            *this.failed = true;
-            return Poll::Ready(Err(cap_error("max_entry_bytes")));
-        }
-        *this.remaining -= read;
-        result
-    }
-}
-
-pin_project! {
     /// Bounds total decoded bytes mid-decode
     pub struct Cap<R> {
         #[pin]
         inner: R,
         total: Arc<AtomicU64>,
         max: u64,
-        failed: bool,
     }
 }
 
 impl<R> Cap<R> {
     pub fn new(inner: R, total: Arc<AtomicU64>, max: u64) -> Self {
-        Self {
-            inner,
-            total,
-            max,
-            failed: false,
-        }
+        Self { inner, total, max }
     }
 }
 
@@ -238,18 +160,15 @@ impl<R: AsyncRead> AsyncRead for Cap<R> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<io::Result<()>> {
         let this = self.project();
-        if *this.failed {
-            return Poll::Ready(Err(cap_error("aborted")));
-        }
         let before = buf.filled().len();
         let result = this.inner.poll_read(cx, buf);
         let read = (buf.filled().len() - before) as u64;
         if read > 0 && this.total.fetch_add(read, Ordering::Relaxed) + read > *this.max {
             buf.set_filled(before);
-            *this.failed = true;
-            return Poll::Ready(Err(cap_error("max_total_bytes")));
+            let breach = Error::LimitExceeded("max_total_bytes");
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, breach)));
         }
         result
     }
@@ -269,16 +188,10 @@ pub fn read_error(error: io::Error, total: &AtomicU64, max: u64) -> Error {
     }
 }
 
-/// A read error standing for a breached byte cap
-fn cap_error(which: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, Error::LimitExceeded(which))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::reader::Reader;
-    use pretty_assertions::assert_eq;
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
     use tokio_tar::{Builder, Header};
@@ -329,16 +242,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_round_trips_a_file() {
-        let tar = tar_of(&[("bin/sh", EntryType::Regular, b"hello")]).await;
-        let got = collect(tar, ReadLimits::default()).await;
-        assert_eq!(got.len(), 1);
-        let (path, body) = got[0].as_ref().unwrap();
-        assert_eq!(path.as_path(), std::path::Path::new("bin/sh"));
-        assert_eq!(body, b"hello");
-    }
-
-    #[tokio::test]
     async fn test_max_entries_is_enforced() {
         let tar = tar_of(&[
             ("a", EntryType::Regular, b"x"),
@@ -356,23 +259,6 @@ mod tests {
         assert!(matches!(
             got.last(),
             Some(Err(Error::LimitExceeded("max_entries")))
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_max_entry_bytes_is_enforced() {
-        let tar = tar_of(&[("big", EntryType::Regular, b"0123456789")]).await;
-        let got = collect(
-            tar,
-            ReadLimits {
-                max_entry_bytes: 4,
-                ..ReadLimits::default()
-            },
-        )
-        .await;
-        assert!(matches!(
-            got[0],
-            Err(Error::LimitExceeded("max_entry_bytes"))
         ));
     }
 

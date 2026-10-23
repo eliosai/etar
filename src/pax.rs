@@ -7,8 +7,7 @@ use crate::mtime;
 use crate::settings::pax::{
     GNU_SPARSE, LINKPATH, MTIME, NANOS_PER_SEC, SCHILY_XATTR, USTAR_LINK_LEN,
 };
-use crate::xattr::{self, Collector};
-use std::collections::BTreeMap;
+use crate::xattr::{self, Xattrs};
 use std::path::Path;
 use tokio::io::AsyncRead;
 use tokio_tar::Entry;
@@ -16,7 +15,7 @@ use tokio_tar::Entry;
 /// What an entry's PAX header adds to its ustar header
 pub struct Extras {
     /// Extended attributes by name
-    pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
+    pub xattrs: Xattrs,
     /// Modification time seconds and nanoseconds, when the header carries one
     pub mtime: Option<(u64, u32)>,
 }
@@ -77,21 +76,22 @@ pub async fn read<R>(entry: &mut Entry<R>, limits: &ReadLimits) -> Result<Extras
 where
     R: AsyncRead + Unpin,
 {
-    let mut collector = Collector::new(limits.max_xattr_bytes);
-    let mut mtime = None;
+    let mut extras = Extras {
+        xattrs: Xattrs::new(),
+        mtime: None,
+    };
+    let mut budget = limits.max_xattr_bytes;
     let extensions = entry.pax_extensions().await.map_err(|_| Error::Malformed)?;
     for extension in extensions.into_iter().flatten() {
         let extension = extension.map_err(|_| Error::Malformed)?;
-        if extension.key_bytes().starts_with(GNU_SPARSE) {
+        let (key, value) = (extension.key_bytes(), extension.value_bytes());
+        if key.starts_with(GNU_SPARSE) {
             return Err(Error::DisallowedEntryType);
         }
-        if extension.key_bytes() == MTIME.as_bytes() {
-            mtime = Some(mtime::parse(extension.value_bytes())?);
+        if key == MTIME.as_bytes() {
+            extras.mtime = Some(mtime::parse(value)?);
         }
-        collector.record(extension.key_bytes(), extension.value_bytes())?;
+        xattr::record(&mut extras.xattrs, &mut budget, key, value)?;
     }
-    Ok(Extras {
-        xattrs: collector.finish(),
-        mtime,
-    })
+    Ok(extras)
 }

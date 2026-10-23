@@ -10,7 +10,7 @@ integration test, not part of the library's dependency graph.
 - `src/entry.rs` owns `EntryPath`, entry kinds and Unix metadata
 - `src/reader.rs` owns sequential input and completion
 - `src/guard.rs` caps extension records before the parser buffers them
-- `src/open.rs` owns the bounded body and the decoded-byte cap
+- `src/open.rs` validates one entry and owns the decoded-byte cap
 - `src/writer.rs` owns output format and finalization
 - `src/limits.rs` owns `ReadLimits`; `src/settings.rs` owns fixed codec settings
 - `src/pack.rs` encodes one tar entry
