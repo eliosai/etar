@@ -13,8 +13,8 @@ stream and checks the second end block and zero padding.
 
 `entry` owns relative paths, kinds, and Unix metadata. `limits` owns the
 input ceilings. `guard` checks raw tar header sizes before the parser can
-allocate an extension buffer. `open` contains the bounded body and the decoded-byte
-cap; `compress` selects the decoder; `settings` fixes the zstd level and the
+allocate an extension buffer. `open` validates one entry and holds the
+decoded-byte cap; `compress` selects the decoder; `settings` fixes the zstd level and the
 metadata-record ceiling. `pack` emits one tar entry, while
 `pax`, `xattr`, and `mtime` encode and decode extended attributes under the
 `max_xattr_bytes` budget and sub-second modification times.

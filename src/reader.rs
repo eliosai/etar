@@ -5,7 +5,7 @@ use crate::entry::{EntryPath, Meta};
 use crate::error::Error;
 use crate::guard::HeaderGuard;
 use crate::limits::ReadLimits;
-use crate::open::{Cap, OpenEntry, Tagged, open_entry, read_error};
+use crate::open::{Cap, Tagged, open_entry, read_error};
 use crate::settings::open::MAX_METADATA_BYTES;
 use futures::StreamExt;
 use std::marker::PhantomData;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
-use tokio_tar::{Archive, Entries};
+use tokio_tar::{Archive, Entries, Entry};
 
 type Source = Box<dyn AsyncRead + Unpin + Send>;
 
@@ -30,7 +30,10 @@ pub struct EntryHeader<'a> {
 
 /// One entry body, borrowed from the reader until dropped
 pub struct ReadEntry<'a> {
-    inner: OpenEntry<Archive<Source>>,
+    path: EntryPath,
+    meta: Meta,
+    size_bytes: u64,
+    body: Entry<Archive<Source>>,
     failed: Arc<AtomicBool>,
     reader: PhantomData<&'a mut Reader>,
 }
@@ -39,9 +42,9 @@ impl ReadEntry<'_> {
     /// Return the validated header without cloning its path or metadata
     pub fn header(&self) -> EntryHeader<'_> {
         EntryHeader {
-            path: &self.inner.path,
-            meta: &self.inner.meta,
-            size_bytes: self.inner.size_bytes,
+            path: &self.path,
+            meta: &self.meta,
+            size_bytes: self.size_bytes,
         }
     }
 }
@@ -53,7 +56,7 @@ impl AsyncRead for ReadEntry<'_> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        let result = Pin::new(&mut this.inner).poll_read(cx, buf);
+        let result = Pin::new(&mut this.body).poll_read(cx, buf);
         if matches!(result, Poll::Ready(Err(_))) {
             this.failed.store(true, Ordering::Relaxed);
         }
@@ -96,28 +99,8 @@ pub struct Reader {
     entries: Option<Entries<Source>>,
     limits: ReadLimits,
     decoded: Arc<AtomicU64>,
-    body_failed: Arc<AtomicBool>,
-    seen: u64,
-    done: bool,
-}
-
-struct AbortOnDrop {
     failed: Arc<AtomicBool>,
-    armed: bool,
-}
-
-impl AbortOnDrop {
-    fn complete(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        if self.armed {
-            self.failed.store(true, Ordering::Relaxed);
-        }
-    }
+    seen: u64,
 }
 
 impl Reader {
@@ -137,62 +120,50 @@ impl Reader {
             entries: Some(entries),
             limits,
             decoded,
-            body_failed: Arc::new(AtomicBool::new(false)),
+            failed: Arc::new(AtomicBool::new(false)),
             seen: 0,
-            done: false,
         })
     }
 
     /// Return the next entry; a clean end verifies the tar trailer and decoder
     pub async fn next_entry(&mut self) -> Result<Option<ReadEntry<'_>>, Error> {
-        if self.body_failed.load(Ordering::Relaxed) {
+        if self.failed.load(Ordering::Relaxed) {
             return Err(Error::Aborted);
         }
-        if self.done {
+        let failed = self.failed.clone();
+        failed.store(true, Ordering::Relaxed);
+        let next = self.advance().await;
+        failed.store(next.is_err(), Ordering::Relaxed);
+        next
+    }
+
+    async fn advance(&mut self) -> Result<Option<ReadEntry<'_>>, Error> {
+        let Some(entries) = self.entries.as_mut() else {
             return Ok(None);
-        }
-        let abort = AbortOnDrop {
-            failed: self.body_failed.clone(),
-            armed: true,
         };
-        let next = match self.entries.as_mut() {
-            Some(entries) => entries.next().await,
-            None => return Err(Error::Malformed),
-        };
-        match next {
-            Some(Ok(entry)) => {
-                let accepted = self.accept(entry).await.map(Some);
-                if accepted.is_ok() {
-                    abort.complete();
-                }
-                accepted
-            }
+        match entries.next().await {
+            Some(Ok(entry)) => self.accept(entry).await.map(Some),
             Some(Err(error)) => Err(read_error(
                 error,
                 &self.decoded,
                 self.limits.max_total_bytes,
             )),
-            None => {
-                self.verify_end().await?;
-                self.done = true;
-                abort.complete();
-                Ok(None)
-            }
+            None => self.verify_end().await.map(|()| None),
         }
     }
 
-    async fn accept(
-        &mut self,
-        entry: tokio_tar::Entry<Archive<Source>>,
-    ) -> Result<ReadEntry<'_>, Error> {
+    async fn accept(&mut self, mut body: Entry<Archive<Source>>) -> Result<ReadEntry<'_>, Error> {
         self.seen += 1;
         if self.seen > self.limits.max_entries {
             return Err(Error::LimitExceeded("max_entries"));
         }
-        let inner = open_entry(entry, &self.limits).await?;
+        let (path, meta, size_bytes) = open_entry(&mut body, &self.limits).await?;
         Ok(ReadEntry {
-            inner,
-            failed: self.body_failed.clone(),
+            path,
+            meta,
+            size_bytes,
+            body,
+            failed: self.failed.clone(),
             reader: PhantomData,
         })
     }
