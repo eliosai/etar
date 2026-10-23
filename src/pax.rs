@@ -4,7 +4,9 @@ use crate::entry::{Kind, Meta};
 use crate::error::Error;
 use crate::limits::ReadLimits;
 use crate::mtime;
-use crate::settings::pax::{LINKPATH, MTIME, NANOS_PER_SEC, SCHILY_XATTR, USTAR_LINK_LEN};
+use crate::settings::pax::{
+    GNU_SPARSE, LINKPATH, MTIME, NANOS_PER_SEC, SCHILY_XATTR, USTAR_LINK_LEN,
+};
 use crate::xattr::{self, Collector};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -80,6 +82,9 @@ where
     let extensions = entry.pax_extensions().await.map_err(|_| Error::Malformed)?;
     for extension in extensions.into_iter().flatten() {
         let extension = extension.map_err(|_| Error::Malformed)?;
+        if extension.key_bytes().starts_with(GNU_SPARSE) {
+            return Err(Error::DisallowedEntryType);
+        }
         if extension.key_bytes() == MTIME.as_bytes() {
             mtime = Some(mtime::parse(extension.value_bytes())?);
         }

@@ -34,6 +34,8 @@ pub mod device {
 pub mod pax {
     /// PAX key prefix GNU tar and star use for an extended attribute
     pub const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";
+    /// PAX key prefix marking a GNU sparse member
+    pub const GNU_SPARSE: &[u8] = b"GNU.sparse.";
     /// PAX key holding a modification time with an optional fraction
     pub const MTIME: &str = "mtime";
     /// Nanoseconds in one second
