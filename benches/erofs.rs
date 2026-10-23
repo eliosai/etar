@@ -39,7 +39,7 @@ fn bytes(size: usize, seed: u32) -> Vec<u8> {
 
 /// Build one image from `files` and return its length
 async fn image(erofs: &Erofs, files: &[(EntryPath, Vec<u8>)]) -> u64 {
-    let mut build = erofs.build().expect("build");
+    let mut build = erofs.build().await.expect("build");
     for (path, body) in files {
         let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
         let size = body.len() as u64;
