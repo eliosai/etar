@@ -30,11 +30,12 @@ impl Erofs {
         let output = Command::new(&program)
             .arg("-V")
             .env_clear()
+            .kill_on_drop(true)
             .output()
             .await?;
         let banner = String::from_utf8_lossy(&output.stdout);
         let first = banner.lines().next().unwrap_or_default();
-        if !output.status.success() || !first.contains(VERSION) {
+        if !output.status.success() || first.split_whitespace().last() != Some(VERSION) {
             return Err(Error::ErofsVersion(first.to_owned()));
         }
         let scratch = scratch.into();

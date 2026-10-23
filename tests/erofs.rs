@@ -215,9 +215,14 @@ async fn a_truncated_stream_never_yields_an_image() {
 
 /// An executable that reports 1.9.4 and runs `body` for any other invocation
 fn fake(dir: &Path, body: &str) -> PathBuf {
+    fake_version(dir, "1.9.4", body)
+}
+
+/// An executable that reports `version` and runs `body` for any other invocation
+fn fake_version(dir: &Path, version: &str, body: &str) -> PathBuf {
     let path = dir.join("mkfs.erofs");
     let script = format!(
-        "#!/bin/sh\n[ \"$1\" = -V ] && echo 'mkfs.erofs (erofs-utils) 1.9.4' && exit 0\n{body}\n"
+        "#!/bin/sh\n[ \"$1\" = -V ] && echo 'mkfs.erofs (erofs-utils) {version}' && exit 0\n{body}\n"
     );
     std::fs::write(&path, script).expect("script");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -271,4 +276,14 @@ async fn only_mkfs_erofs_1_9_4_is_accepted() {
     assert!(matches!(result, Err(Error::ErofsVersion(_))), "{result:?}");
     let missing = Erofs::new(dir.path().join("absent"), dir.path()).await;
     assert!(matches!(missing, Err(Error::Io(_))), "{missing:?}");
+    for version in ["1.9.45", "11.9.4", "1.9.4-dirty"] {
+        let dir = tempfile::tempdir().expect("dir");
+        let program = fake_version(dir.path(), version, "exit 0");
+        let result = Erofs::new(program, dir.path()).await;
+        let banner = format!("mkfs.erofs (erofs-utils) {version}");
+        assert!(
+            matches!(&result, Err(Error::ErofsVersion(got)) if *got == banner),
+            "{version}: {result:?}"
+        );
+    }
 }
