@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// A pinned erofs-utils binary, from `ETAR_EROFS_BIN` or the `just erofs-tools` prefix
 fn tool(name: &str) -> PathBuf {
@@ -176,15 +176,20 @@ async fn dropping_a_build_kills_mkfs_and_leaves_scratch_empty() {
     for _ in 0..8 {
         let mut build = erofs.build().await.expect("build");
         file(&mut build, "half", 0o644, noise(1024 * 1024, 1)).await;
-        assert_eq!(running_mkfs(), 1);
+        assert_eq!(settled_mkfs(1).await, 1);
         drop(build);
     }
+    assert_eq!(settled_mkfs(0).await, 0);
+    assert_eq!(scratch_files(scratch.path()), 0);
+}
+
+/// Poll live mkfs.erofs children for up to five seconds until `want` remain
+async fn settled_mkfs(want: usize) -> usize {
     let started = std::time::Instant::now();
-    while running_mkfs() > 0 && started.elapsed().as_secs() < 5 {
+    while running_mkfs() != want && started.elapsed().as_secs() < 5 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert_eq!(running_mkfs(), 0);
-    assert_eq!(scratch_files(scratch.path()), 0);
+    running_mkfs()
 }
 
 /// Live mkfs.erofs children of this test process
@@ -211,6 +216,50 @@ async fn a_truncated_stream_never_yields_an_image() {
     let short = WriteEntry::file(path, meta, 100, Cursor::new(vec![0u8; 10])).expect("file");
     assert!(build.append(short).await.is_err());
     assert!(matches!(build.finish().await, Err(Error::Aborted)));
+}
+
+#[tokio::test]
+async fn mkfs_fails_on_a_stream_truncated_past_the_pipe_buffer() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    file(&mut build, "whole", 0o644, noise(256 * 1024, 2)).await;
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+    let path = EntryPath::new("short").expect("path");
+    let body = Cursor::new(noise(256 * 1024, 4));
+    let short = WriteEntry::file(path, meta, 1024 * 1024, body).expect("file");
+    let appended = build.append(short).await;
+    assert!(
+        matches!(appended, Err(Error::BodyLengthMismatch)),
+        "{appended:?}"
+    );
+    let result = build.finish().await;
+    assert!(
+        matches!(&result, Err(Error::Erofs { status, .. }) if status.code() == Some(1)),
+        "{result:?}"
+    );
+    assert_eq!(scratch_files(scratch.path()), 0);
+}
+
+#[tokio::test]
+async fn a_dropped_append_mid_body_never_yields_an_image() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let (body, mut sender) = tokio::io::duplex(256 * 1024);
+    sender
+        .write_all(&noise(128 * 1024, 5))
+        .await
+        .expect("prefix");
+    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
+    let path = EntryPath::new("stalled").expect("path");
+    let entry = WriteEntry::file(path, meta, 1024 * 1024, body).expect("file");
+    let wait = std::time::Duration::from_millis(200);
+    let stalled = tokio::time::timeout(wait, build.append(entry)).await;
+    assert!(stalled.is_err(), "{stalled:?}");
+    let result = build.finish().await;
+    assert!(
+        matches!(&result, Err(Error::Erofs { status, .. }) if status.code() == Some(1)),
+        "{result:?}"
+    );
 }
 
 /// An executable that reports 1.9.4 and runs `body` for any other invocation
