@@ -1,6 +1,6 @@
 //! Compression sniffing and transparent decode for opened archives
 
-use crate::settings::compression::{BUF_CAP, PEEK_LEN, ZSTD_MAGIC};
+use crate::settings::compression::{BUF_CAP, PEEK_LEN, WINDOW_LOG_MAX, ZSTD_MAGIC};
 use std::io::Cursor;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
@@ -28,9 +28,10 @@ fn wrap<R>(magic: &[u8], buf: BufReader<R>) -> Box<dyn AsyncRead + Unpin + Send>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
-    use async_compression::tokio::bufread::ZstdDecoder;
+    use async_compression::{tokio::bufread::ZstdDecoder, zstd::DParameter};
     if magic.starts_with(&ZSTD_MAGIC) {
-        let mut decoder = ZstdDecoder::new(buf);
+        let window = [DParameter::window_log_max(WINDOW_LOG_MAX)];
+        let mut decoder = ZstdDecoder::with_params(buf, &window);
         decoder.multiple_members(true);
         Box::new(decoder)
     } else {

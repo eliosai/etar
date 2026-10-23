@@ -121,6 +121,23 @@ impl EntryPath {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_os_str().as_encoded_bytes()
     }
+
+    /// The name bytes of each component, root-first, without `.` or empty components
+    ///
+    /// ```
+    /// use etar::EntryPath;
+    ///
+    /// let path = EntryPath::new("./a//b/./c/").unwrap();
+    /// let names: Vec<&[u8]> = path.components().collect();
+    /// assert_eq!(names, [&b"a"[..], b"b", b"c"]);
+    /// assert_eq!(EntryPath::new(".").unwrap().components().count(), 0);
+    /// ```
+    pub fn components(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.components().filter_map(|component| match component {
+            Component::Normal(name) => Some(name.as_encoded_bytes()),
+            _ => None,
+        })
+    }
 }
 
 /// Reject empty, NUL-bearing, absolute, or ascending paths
@@ -199,6 +216,13 @@ mod tests {
         assert!(matches!(EntryPath::new("a\0b"), Err(Error::NulPath)));
     }
 
+    #[test]
+    fn test_components_drop_dots_and_empty_parts() {
+        let path = EntryPath::new("./a//b/./c/").unwrap();
+        let names: Vec<&[u8]> = path.components().collect();
+        assert_eq!(names, vec![&b"a"[..], b"b", b"c"]);
+    }
+
     /// One path component biased toward the dangerous alphabet
     fn component() -> impl Strategy<Value = String> {
         prop_oneof![Just("..".to_owned()), Just(".".to_owned()), "[a-z]{1,5}"]
@@ -216,6 +240,9 @@ mod tests {
                 for c in safe.as_path().components() {
                     prop_assert!(matches!(c, Component::Normal(_) | Component::CurDir));
                 }
+                let names: Vec<&[u8]> = safe.components().collect();
+                let want: Vec<&[u8]> = parts.iter().filter(|p| *p != ".").map(|p| p.as_bytes()).collect();
+                prop_assert_eq!(names, want);
             }
         }
 
