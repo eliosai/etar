@@ -118,3 +118,17 @@ async fn a_window_above_16_mib_is_refused_before_decoding() {
         1000
     );
 }
+
+#[tokio::test]
+async fn a_later_frame_above_16_mib_is_refused() {
+    let padding = [0u8; 1024];
+    for (window_log, accepted) in [(24, true), (25, false)] {
+        let mut archive = small_files(true).await;
+        archive.extend(zstd_with_window(window_log, &padding).await);
+        let result = common::drain(archive, ReadLimits::default()).await;
+        match accepted {
+            true => assert_eq!(result.expect("read"), 1000),
+            false => assert!(matches!(result, Err(etar::Error::Malformed)), "{result:?}"),
+        }
+    }
+}
