@@ -8,6 +8,7 @@ check:
     cargo fmt --all -- --check
     cargo check --workspace --all-targets --locked
     cargo clippy -p etar --all-targets --locked -- -D warnings
+    cargo clippy -p etar --all-targets --features erofs --locked -- -D warnings
 
 fmt:
     cargo fmt --all
@@ -18,17 +19,20 @@ test:
 test-ci:
     cargo nextest run --profile ci -p etar --locked
 
-test-interop:
-    cargo nextest run -p etar --test integration --run-ignored only --locked
+erofs-tools:
+    bash scripts/erofs-tools.sh
+
+test-erofs: erofs-tools
+    cargo nextest run -p etar --features erofs --test erofs --locked
 
 test-doc:
     cargo test -p etar --doc --locked
 
 doc-check:
-    RUSTDOCFLAGS="-D warnings" cargo doc -p etar --no-deps --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc -p etar --no-deps --all-features --locked
 
 docs-open:
-    RUSTDOCFLAGS="-D warnings" cargo doc -p etar --no-deps --locked --open
+    RUSTDOCFLAGS="-D warnings" cargo doc -p etar --no-deps --all-features --locked --open
 
 msrv:
     cargo +1.96 check -p etar --all-targets --locked
@@ -41,10 +45,10 @@ audit:
     cargo deny check
 
 bench-build mode="simulation":
-    RUSTFLAGS="" cargo codspeed build -m {{mode}} -p etar --bench streams
+    RUSTFLAGS="" cargo codspeed build -m {{mode}} -p etar --features erofs
 
-bench-run mode="simulation":
-    RUSTFLAGS="" cargo codspeed run -m {{mode}} -p etar --bench streams
+bench-run mode="simulation": erofs-tools
+    RUSTFLAGS="" cargo codspeed run -m {{mode}} -p etar
 
 bench:
     just bench-build
