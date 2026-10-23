@@ -255,18 +255,16 @@ impl<R: AsyncRead> AsyncRead for Cap<R> {
     }
 }
 
-/// Classify a parser read failure as a total-cap breach or malformed input
-pub fn read_error(error: std::io::Error, total: &AtomicU64, max: u64) -> Error {
+/// Classify a parser read failure as a source failure, a cap breach, or malformed input
+pub fn read_error(error: io::Error, total: &AtomicU64, max: u64) -> Error {
     if total.load(Ordering::Relaxed) > max {
         return Error::LimitExceeded("max_total_bytes");
     }
-    match error
-        .get_ref()
-        .and_then(|source| source.downcast_ref::<Error>())
-    {
-        Some(Error::LimitExceeded(which)) => Error::LimitExceeded(which),
-        Some(Error::DisallowedEntryType) => Error::DisallowedEntryType,
-        Some(Error::Io(_)) => Error::Io(error),
+    match error.into_inner().map(|source| source.downcast::<Error>()) {
+        Some(Ok(source)) => match *source {
+            known @ (Error::Io(_) | Error::LimitExceeded(_) | Error::DisallowedEntryType) => known,
+            _ => Error::Malformed,
+        },
         _ => Error::Malformed,
     }
 }

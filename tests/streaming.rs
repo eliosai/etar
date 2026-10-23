@@ -27,6 +27,17 @@ impl AsyncRead for OneByte {
     }
 }
 
+#[derive(Debug)]
+struct SourceLost;
+
+impl std::fmt::Display for SourceLost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("source lost")
+    }
+}
+
+impl std::error::Error for SourceLost {}
+
 struct BrokenSource {
     sent_prefix: bool,
     kind: io::ErrorKind,
@@ -40,7 +51,7 @@ impl AsyncRead for BrokenSource {
         out: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         if self.sent_prefix {
-            return Poll::Ready(Err(io::Error::new(self.kind, "source lost")));
+            return Poll::Ready(Err(io::Error::new(self.kind, SourceLost)));
         }
         out.put_slice(&self.prefix);
         self.sent_prefix = true;
@@ -80,7 +91,7 @@ async fn zstd_magic_detection_survives_one_byte_reads() {
 }
 
 #[tokio::test]
-async fn source_errors_keep_their_io_kind() {
+async fn source_errors_come_back_unwrapped() {
     for (kind, prefix) in [
         (io::ErrorKind::BrokenPipe, *b"tar!"),
         (io::ErrorKind::Other, [0x28, 0xb5, 0x2f, 0xfd]),
@@ -97,7 +108,12 @@ async fn source_errors_keep_their_io_kind() {
             Ok(_) => panic!("broken source was accepted"),
             Err(error) => error,
         };
-        assert!(matches!(error, Error::Io(error) if error.kind() == kind));
+        let Error::Io(error) = error else {
+            panic!("source failure became {error:?}");
+        };
+        assert_eq!(error.kind(), kind);
+        let source = error.into_inner().expect("custom source error");
+        assert!(source.is::<SourceLost>(), "wrapped source {source:?}");
     }
 }
 
