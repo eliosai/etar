@@ -2,6 +2,8 @@
 
 mod compress;
 mod entry;
+#[cfg(feature = "erofs")]
+mod erofs;
 mod error;
 mod guard;
 mod limits;
@@ -16,6 +18,9 @@ mod xattr;
 
 #[doc(inline)]
 pub use entry::{EntryPath, Kind, Meta};
+#[cfg(feature = "erofs")]
+#[doc(inline)]
+pub use erofs::{Erofs, ErofsBuild};
 #[doc(inline)]
 pub use error::Error;
 #[doc(inline)]

@@ -40,12 +40,16 @@ description = "Bounded streaming reader and writer for tar and tar.zst"
 readme = "README.md"
 include = ["/src/**", "/tests/**", "/benches/**", "/README.md", "/LICENSE", "/docs/**"]
 
+[features]
+erofs = ["dep:tempfile", "tokio/process"]
+
 [dependencies]
 astral-tokio-tar = { workspace = true }
 async-compression = { workspace = true }
 pin-project-lite = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
@@ -60,3 +64,11 @@ divan = { workspace = true }
 [[bench]]
 name = "streams"
 harness = false
+
+[[bench]]
+name = "erofs"
+harness = false
+required-features = ["erofs"]
+
+[package.metadata.docs.rs]
+features = ["erofs"]
