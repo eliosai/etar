@@ -57,8 +57,9 @@ decoded tar bytes, 4096 path bytes, and 64 KiB of extended attribute names and
 values per entry. The decoded-byte cap includes tar headers and padding. Every
 GNU or PAX extension record stops at 1 MiB, checked before the parser buffers
 its payload. Regular files, directories, symlinks, hardlinks, character
-devices, block devices, and fifos surface as their `Kind`. Sparse, global PAX,
-and other entry types are `Error::DisallowedEntryType`. Directory, link,
+devices, block devices, and fifos surface as their `Kind`. Sparse members,
+including PAX `GNU.sparse.*` records, global PAX headers, and other entry types
+are `Error::DisallowedEntryType`. Directory, link,
 device, and fifo entries with nonzero body lengths are rejected.
 
 Transport failures remain `Error::Io` with their original I/O kind. Header

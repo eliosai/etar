@@ -257,3 +257,32 @@ async fn pax_size_override_stays_aligned_with_the_parser() {
     drop(entry);
     assert!(reader.next_entry().await.expect("end").is_none());
 }
+
+#[tokio::test]
+async fn pax_gnu_sparse_members_are_disallowed() {
+    let formats: [&[(&str, &str)]; 2] = [
+        &[
+            ("GNU.sparse.major", "1"),
+            ("GNU.sparse.minor", "0"),
+            ("GNU.sparse.name", "f"),
+            ("GNU.sparse.realsize", "2"),
+        ],
+        &[
+            ("GNU.sparse.size", "2"),
+            ("GNU.sparse.numblocks", "1"),
+            ("GNU.sparse.map", "0,2"),
+        ],
+    ];
+    for records in formats {
+        let records = records
+            .iter()
+            .flat_map(|(key, value)| common::pax_record(key, value))
+            .collect();
+        let archive = common::pax_tar(records, 0).await;
+        let mut reader = Reader::open(Cursor::new(archive), ReadLimits::default())
+            .await
+            .expect("reader");
+        let got = reader.next_entry().await.map(|_| ());
+        assert!(matches!(got, Err(Error::DisallowedEntryType)), "{got:?}");
+    }
+}
