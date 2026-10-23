@@ -1,12 +1,13 @@
 //! PAX extended header records: encoded for the writer, read for the opener
 
-use crate::entry::Meta;
+use crate::entry::{Kind, Meta};
 use crate::error::Error;
 use crate::limits::ReadLimits;
 use crate::mtime;
-use crate::settings::pax::{MTIME, NANOS_PER_SEC, SCHILY_XATTR};
+use crate::settings::pax::{LINKPATH, MTIME, NANOS_PER_SEC, SCHILY_XATTR, USTAR_LINK_LEN};
 use crate::xattr::{self, Collector};
 use std::collections::BTreeMap;
+use std::path::Path;
 use tokio::io::AsyncRead;
 use tokio_tar::Entry;
 
@@ -33,11 +34,25 @@ pub fn encode(meta: &Meta) -> Vec<u8> {
         let value = format!("{}.{:09}", meta.mtime_unix_secs, meta.mtime_nanos);
         push_record(&mut body, MTIME.as_bytes(), value.as_bytes());
     }
+    if let Kind::Symlink { target } | Kind::Hardlink { target } = &meta.kind
+        && !fits_header(target)
+    {
+        push_record(
+            &mut body,
+            LINKPATH.as_bytes(),
+            target.as_os_str().as_encoded_bytes(),
+        );
+    }
     for (name, value) in meta.xattrs.iter().filter(|(_, value)| !value.is_empty()) {
         let key = [SCHILY_XATTR, name.as_slice()].concat();
         push_record(&mut body, &key, value);
     }
     body
+}
+
+/// Whether a link target fits the ustar linkname field
+pub fn fits_header(target: &Path) -> bool {
+    target.as_os_str().len() <= USTAR_LINK_LEN
 }
 
 /// Append one `<length> <key>=<value>\n` record, where length counts itself

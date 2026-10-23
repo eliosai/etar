@@ -167,7 +167,7 @@ where
 {
     header.set_entry_type(kind);
     header.set_size(0);
-    if let Some(target) = link {
+    if let Some(target) = link.filter(|target| pax::fits_header(target)) {
         header.set_link_name(&target)?;
     }
     builder
