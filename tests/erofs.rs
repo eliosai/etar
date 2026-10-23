@@ -287,3 +287,57 @@ async fn only_mkfs_erofs_1_9_4_is_accepted() {
         );
     }
 }
+
+/// Append `meta` under `name`, with a one-byte body when it is a file
+async fn stamped(build: &mut ErofsBuild, name: &str, meta: Meta) {
+    let path = EntryPath::new(name).expect("path");
+    let result = match meta.kind {
+        Kind::File => {
+            let entry = WriteEntry::file(path, meta, 1, Cursor::new(b"x")).expect("file");
+            build.append(entry).await
+        }
+        _ => {
+            build
+                .append(WriteEntry::metadata(path, meta).expect("meta"))
+                .await
+        }
+    };
+    result.expect("append");
+}
+
+#[tokio::test]
+async fn modes_mtimes_and_links_survive_the_image() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut build = erofs(scratch.path()).await.build().expect("build");
+    let target = PathBuf::from(format!("{}/{}", "d".repeat(70), "t".repeat(79)));
+    let symlink = Kind::Symlink {
+        target: target.clone(),
+    };
+    let entries = [
+        ("d", 0o1755, 1_600_000_000, 7, Kind::Dir),
+        ("d/f", 0o4755, 1_700_000_000, 123_456_789, Kind::File),
+        ("g", 0o2711, 1_700_000_001, 999_999_999, Kind::File),
+        ("d/sym", 0o777, 1_700_000_002, 5, symlink),
+    ];
+    for (name, mode, secs, nanos, kind) in entries.clone() {
+        let meta = Meta::new(mode, 0, 0, secs as u64, kind).with_mtime_nanos(nanos);
+        stamped(&mut build, name, meta).await;
+    }
+    let hard = Kind::Hardlink {
+        target: "d/f".into(),
+    };
+    meta(&mut build, "hard", 0o4755, hard).await;
+    let mut image = Vec::new();
+    let mut file = build.finish().await.expect("finish");
+    file.read_to_end(&mut image).await.expect("read");
+    let dir = extract(&image);
+    let x = dir.path().join("x");
+    for (name, mode, secs, nanos, _) in entries {
+        let stat = std::fs::symlink_metadata(x.join(name)).expect(name);
+        let got = (stat.mode() & 0o7777, stat.mtime(), stat.mtime_nsec());
+        assert_eq!(got, (mode, secs, i64::from(nanos)), "{name}");
+    }
+    assert_eq!(std::fs::read_link(x.join("d/sym")).expect("link"), target);
+    let ino = |name: &str| std::fs::metadata(x.join(name)).expect(name).ino();
+    assert_eq!(ino("hard"), ino("d/f"));
+}
