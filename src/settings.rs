@@ -9,6 +9,8 @@ pub mod compression {
     pub const BUF_CAP: usize = 64 * 1024;
     /// zstd level the writer compresses at
     pub const LEVEL: i32 = 3;
+    /// Largest zstd window the decoder accepts, as a power of two (16 MiB)
+    pub const WINDOW_LOG_MAX: u32 = 24;
 }
 
 pub mod open {
