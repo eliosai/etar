@@ -6,6 +6,7 @@ The public operations use the same entry vocabulary:
 | --- | --- | --- |
 | `Writer::tar(sink)` | An `AsyncWrite` sink | `finish()` writes the tar end blocks, shuts the sink down, and returns it |
 | `Writer::tar_zst(sink)` | An `AsyncWrite` sink | As `tar`, inside one zstd frame at level 3 compressed on the calling task |
+| `Erofs::new(program, scratch)`, then `build().await` | A pinned mkfs.erofs 1.9.4 and a scratch directory, behind the `erofs` feature | `finish()` returns the image rewound to its start once mkfs.erofs exits cleanly |
 | `Reader::open(source, limits)` | An `AsyncRead` source, plain or zstd | `next_entry()` yields one borrowed body; `Ok(None)` means the whole archive passed trailer validation |
 
 `Meta::mtime_nanos` holds the nanoseconds past `mtime_unix_secs` and must stay
@@ -69,3 +70,13 @@ Transport failures remain `Error::Io` with their original I/O kind. Header
 and trailer failures are `Error::Malformed`; unsafe paths and limit breaches
 have named variants. Direct body reads use `AsyncRead` and therefore return
 `io::Error`.
+
+`Erofs::new` runs `program -V` and returns `Error::ErofsVersion` unless the
+banner's version is exactly 1.9.4. `Erofs::build` opens an unlinked image file
+in scratch and starts mkfs.erofs with the tar on stdin, the image as its
+output, and scratch as its `TMPDIR`. `ErofsBuild::append` takes the same
+`WriteEntry` values as `Writer`. A non-zero exit becomes `Error::Erofs` with
+the exit status and the last 4 KiB of stderr. After a failed or cancelled
+append, `finish` returns `Error::Erofs` if mkfs.erofs rejects the truncated tar
+and `Error::Aborted` otherwise, so a truncated tar never yields an image.
+Dropping a build kills mkfs.erofs and frees the image.

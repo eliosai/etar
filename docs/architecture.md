@@ -18,7 +18,9 @@ decoded-byte cap; `compress` selects the decoder; `settings` fixes the zstd leve
 metadata-record ceiling. `pack` emits one tar entry, while
 `pax`, `xattr`, and `mtime` encode and decode extended attributes under the
 `max_xattr_bytes` budget and sub-second modification times.
-`writer` controls format and finalization.
+`writer` controls format and finalization. `erofs`, behind its feature, feeds
+a `Writer` over mkfs.erofs stdin and owns the child, its stderr tail, and the
+unlinked image.
 
 The `object_store` adapter test lives in `tests/`. The AFL target feeds
 bounded input to `Reader`. Divan benchmarks exercise the public reader and

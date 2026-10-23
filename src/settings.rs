@@ -51,3 +51,24 @@ pub mod pax {
     /// Bytes the ustar linkname field holds
     pub const USTAR_LINK_LEN: usize = 100;
 }
+
+#[cfg(feature = "erofs")]
+pub mod erofs {
+    /// The only mkfs.erofs version an image build accepts
+    pub const VERSION: &str = "1.9.4";
+    /// mkfs.erofs flags: stdin tar, zstd 64 KiB clusters, clear UUID, zero build time, two workers
+    pub const ARGS: [&str; 8] = [
+        "--quiet",
+        "--tar=f",
+        "-zzstd,level=3",
+        "-C65536",
+        "--workers=2",
+        "-Uclear",
+        "-T0",
+        "--mkfs-time",
+    ];
+    /// Bytes buffered ahead of the mkfs.erofs stdin pipe
+    pub const PIPE_CAP: usize = 64 * 1024;
+    /// Bytes of mkfs.erofs stderr kept for an error
+    pub const STDERR_TAIL: usize = 4096;
+}

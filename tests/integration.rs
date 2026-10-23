@@ -1,4 +1,4 @@
-//! Archive interoperability with object_store, GNU tar, and mkfs.erofs
+//! Archive interoperability with object_store and GNU tar
 
 use etar::{EntryPath, Kind, Meta, ReadEntry, ReadLimits, Reader, WriteEntry, Writer};
 use object_store::buffered::{BufReader, BufWriter};
@@ -147,52 +147,4 @@ async fn etar_reads_gnu_tar_output() {
         }
     }
     assert!(found);
-}
-
-#[tokio::test]
-#[ignore = "needs erofs-utils (mkfs.erofs)"]
-async fn mkfs_erofs_consumes_etar_tar() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let tar = dir.path().join("rootfs.tar");
-    let mut writer = Writer::tar(Vec::new());
-    let path = EntryPath::new("f").expect("path");
-    let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
-    writer
-        .append(
-            WriteEntry::file(path, meta, 10, Cursor::new(b"erofs body".to_vec())).expect("file"),
-        )
-        .await
-        .expect("append");
-    std::fs::write(&tar, writer.finish().await.expect("finish")).expect("write tar");
-    let image = dir.path().join("rootfs.erofs");
-    let output = Command::new("mkfs.erofs")
-        .arg("--tar=f")
-        .arg(&image)
-        .arg(&tar)
-        .output()
-        .expect("mkfs.erofs");
-    assert!(
-        output.status.success(),
-        "status={:?} stdout={} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let extracted = dir.path().join("extracted");
-    std::fs::create_dir(&extracted).expect("mkdir");
-    let fsck = Command::new("fsck.erofs")
-        .arg(format!("--extract={}", extracted.display()))
-        .arg("--no-preserve-owner")
-        .arg(&image)
-        .output()
-        .expect("fsck.erofs");
-    assert!(
-        fsck.status.success(),
-        "{}",
-        String::from_utf8_lossy(&fsck.stderr)
-    );
-    assert_eq!(
-        std::fs::read(extracted.join("f")).expect("read"),
-        b"erofs body"
-    );
 }

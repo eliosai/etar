@@ -2,7 +2,8 @@
 
 `etar` reads and writes raw tar and tar.zst over Tokio byte
 streams. The library never selects an object store, hashes content, or
-materializes archive paths. `object_store` is a dev dependency for the
+materializes archive paths. The `erofs` feature runs a pinned
+`mkfs.erofs` child, built by `scripts/erofs-tools.sh`. `object_store` is a dev dependency for the
 integration test, not part of the library's dependency graph.
 
 ## Layout and interface
@@ -14,6 +15,7 @@ integration test, not part of the library's dependency graph.
 - `src/writer.rs` owns output format and finalization
 - `src/limits.rs` owns `ReadLimits`; `src/settings.rs` owns fixed codec settings
 - `src/pack.rs` encodes one tar entry
+- `src/erofs.rs`, behind the `erofs` feature, builds EROFS images through pinned mkfs.erofs
 - `src/pax.rs` encodes and reads PAX records; `src/xattr.rs` checks and decodes xattrs;
   `src/mtime.rs` parses PAX mtime values
 - `tests/` exercises only the public crate interface; `fuzz/` owns AFL targets
