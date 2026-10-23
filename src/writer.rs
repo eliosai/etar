@@ -1,24 +1,16 @@
 //! Sequential tar and tar.zst writer
 
-use crate::entry::{Kind, Meta, SafePath};
+use crate::entry::{EntryPath, Kind, Meta};
 use crate::error::Error;
-use crate::pack::{self, PackEntry};
+use crate::pack;
 use crate::pax;
-use crate::zstd::Zstd;
+use crate::settings::compression::LEVEL;
+use async_compression::Level;
 use async_compression::tokio::write::ZstdEncoder;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio_tar::Builder;
-
-/// Output encoding
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    /// Uncompressed tar
-    Tar,
-    /// Tar wrapped in a single zstd frame
-    TarZstd,
-}
 
 /// A checked entry supplied to a writer
 ///
@@ -37,57 +29,52 @@ pub enum Format {
 /// # }
 /// ```
 pub struct WriteEntry<B> {
-    inner: PackEntry<B>,
+    /// The relative path under which the entry is stored
+    pub(crate) path: EntryPath,
+    /// The entry's unix metadata
+    pub(crate) meta: Meta,
+    /// The body length, which the body must yield exactly
+    pub(crate) size: u64,
+    /// The body bytes for a file, absent for other kinds
+    pub(crate) body: Option<B>,
 }
 
 impl<B: AsyncRead + Unpin + Send> WriteEntry<B> {
     /// Create a regular file with an exact declared body length
-    pub fn file(path: SafePath, meta: Meta, size: u64, body: B) -> Result<Self, Error> {
+    pub fn file(path: EntryPath, meta: Meta, size: u64, body: B) -> Result<Self, Error> {
         if !matches!(meta.kind, Kind::File) {
             return Err(Error::InvalidEntryKind);
         }
         pax::check(&meta)?;
         Ok(Self {
-            inner: PackEntry {
-                path,
-                meta,
-                size,
-                body: Some(body),
-            },
+            path,
+            meta,
+            size,
+            body: Some(body),
         })
     }
 }
 
 impl WriteEntry<tokio::io::Empty> {
-    /// Create a directory or link without a body
-    pub fn metadata(path: SafePath, meta: Meta) -> Result<Self, Error> {
+    /// Create a directory, link, device, or fifo without a body
+    pub fn metadata(path: EntryPath, meta: Meta) -> Result<Self, Error> {
         if matches!(meta.kind, Kind::File) {
             return Err(Error::InvalidEntryKind);
         }
         pax::check(&meta)?;
         pack::check_device(&meta.kind)?;
         Ok(Self {
-            inner: PackEntry {
-                path,
-                meta,
-                size: 0,
-                body: None,
-            },
+            path,
+            meta,
+            size: 0,
+            body: None,
         })
     }
 }
 
-/// Finalized sink and number of encoded bytes written
-pub struct WriteOutput<W> {
-    /// The caller-owned sink after all trailers are written
-    pub sink: W,
-    /// Bytes successfully written to the sink
-    pub encoded_bytes: u64,
-}
-
 enum Inner<W: AsyncWrite + Unpin + Send + 'static> {
-    Tar(Builder<Deferred<Counted<W>>>),
-    TarZstd(Builder<Deferred<ZstdEncoder<Counted<W>>>>),
+    Tar(Builder<Deferred<W>>),
+    TarZstd(Builder<Deferred<ZstdEncoder<W>>>),
 }
 
 /// Sequential archive writer; call `finish` to finalize the tar and zstd trailers
@@ -95,17 +82,17 @@ enum Inner<W: AsyncWrite + Unpin + Send + 'static> {
 /// # Example
 ///
 /// ```
-/// use etar::{EntryPath, Format, Kind, Meta, WriteEntry, Writer};
+/// use etar::{EntryPath, Kind, Meta, WriteEntry, Writer};
 /// use std::io::Cursor;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-/// let mut writer = Writer::new(Vec::new(), Format::Tar);
+/// let mut writer = Writer::tar(Vec::new());
 /// let path = EntryPath::new("notes.txt")?;
 /// let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
 /// let file = WriteEntry::file(path, meta, 5, Cursor::new(b"hello".to_vec()))?;
 /// writer.append(file).await?;
-/// let archive = writer.finish().await?.sink;
+/// let archive = writer.finish().await?;
 /// assert_eq!(&archive[257..262], b"ustar");
 /// # Ok::<_, Box<dyn std::error::Error>>(())
 /// # })?;
@@ -140,17 +127,14 @@ impl<W> Writer<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    /// Begin a tar or tar.zst archive on the caller-owned sink
-    pub fn new(sink: W, format: Format) -> Self {
-        match format {
-            Format::Tar => Self::from_inner(Inner::Tar(Builder::new(Deferred(Counted::new(sink))))),
-            Format::TarZstd => Self::with_zstd(sink, Zstd::default()),
-        }
+    /// Begin an uncompressed tar on the caller-owned sink
+    pub fn tar(sink: W) -> Self {
+        Self::from_inner(Inner::Tar(Builder::new(Deferred(sink))))
     }
 
-    /// Begin a tar.zst archive with a chosen zstd level and worker count
-    pub fn with_zstd(sink: W, zstd: Zstd) -> Self {
-        let encoder = zstd.encoder(Counted::new(sink));
+    /// Begin a tar in one zstd frame, compressed at level 3 on the calling task
+    pub fn tar_zst(sink: W) -> Self {
+        let encoder = ZstdEncoder::with_quality(sink, Level::Precise(LEVEL));
         Self::from_inner(Inner::TarZstd(Builder::new(Deferred(encoder))))
     }
 
@@ -174,8 +158,8 @@ where
             armed: true,
         };
         let result = match &mut self.inner {
-            Inner::Tar(builder) => pack::append(builder, entry.inner).await,
-            Inner::TarZstd(builder) => pack::append(builder, entry.inner).await,
+            Inner::Tar(builder) => pack::append(builder, entry).await,
+            Inner::TarZstd(builder) => pack::append(builder, entry).await,
         };
         if result.is_ok() {
             abort.complete();
@@ -183,63 +167,23 @@ where
         result
     }
 
-    /// Emit archive terminators, finish compression, and return the sink
-    pub async fn finish(self) -> Result<WriteOutput<W>, Error> {
+    /// Emit archive terminators, finish compression, shut the sink down, and return it
+    pub async fn finish(self) -> Result<W, Error> {
         if self.failed {
             return Err(Error::Aborted);
         }
-        let sink = match self.inner {
+        match self.inner {
             Inner::Tar(builder) => {
                 let mut sink = builder.into_inner().await?.0;
                 sink.shutdown().await?;
-                sink
+                Ok(sink)
             }
             Inner::TarZstd(builder) => {
                 let mut encoder = builder.into_inner().await?.0;
                 encoder.shutdown().await?;
-                encoder.into_inner()
+                Ok(encoder.into_inner())
             }
-        };
-        Ok(WriteOutput {
-            encoded_bytes: sink.bytes,
-            sink: sink.inner,
-        })
-    }
-}
-
-struct Counted<W> {
-    inner: W,
-    bytes: u64,
-}
-
-impl<W> Counted<W> {
-    fn new(inner: W) -> Self {
-        Self { inner, bytes: 0 }
-    }
-}
-
-impl<W: AsyncWrite + Unpin> AsyncWrite for Counted<W> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        match Pin::new(&mut this.inner).poll_write(cx, buf) {
-            Poll::Ready(Ok(bytes)) => {
-                this.bytes = this.bytes.saturating_add(bytes as u64);
-                Poll::Ready(Ok(bytes))
-            }
-            other => other,
         }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }
 

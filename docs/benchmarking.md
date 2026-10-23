@@ -1,7 +1,7 @@
 # Benchmarks
 
-`benches/streams.rs` measures tar and tar.zst writing, reading, and full
-validation at 4 KiB, 256 KiB, and 4 MiB. A separate read case covers 100 and
+`benches/streams.rs` measures tar and tar.zst writing and reading at 4 KiB,
+256 KiB, and 4 MiB, plus tar.zst writing of 32 MiB of text-like bytes. A separate read case covers 100 and
 1,000 empty files to expose per-entry overhead. Each body case uses a deterministic
 high-entropy payload. Fixture generation and runtime construction happen
 outside the measured closure. Read cases drain each body and verify the

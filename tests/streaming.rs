@@ -1,12 +1,12 @@
 //! Streaming and failure behavior at the public API boundary
 
-use etar::{
-    EntryPath, Error, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer, validate,
-};
+use etar::{EntryPath, Error, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::{self, Cursor};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, ReadBuf};
+
+mod common;
 
 struct OneByte {
     bytes: Vec<u8>,
@@ -48,8 +48,8 @@ impl AsyncRead for BrokenSource {
     }
 }
 
-async fn one_file(format: Format, body: &[u8]) -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), format);
+async fn one_file(zstd: bool, body: &[u8]) -> Vec<u8> {
+    let mut writer = common::writer(zstd);
     let path = EntryPath::new("file").expect("path");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     writer
@@ -59,13 +59,13 @@ async fn one_file(format: Format, body: &[u8]) -> Vec<u8> {
         )
         .await
         .expect("append");
-    writer.finish().await.expect("finish").sink
+    writer.finish().await.expect("finish")
 }
 
 #[tokio::test]
 async fn zstd_magic_detection_survives_one_byte_reads() {
     let source = OneByte {
-        bytes: one_file(Format::TarZstd, b"abc").await,
+        bytes: one_file(true, b"abc").await,
         offset: 0,
     };
     let mut reader = Reader::open(source, ReadLimits::default())
@@ -103,7 +103,7 @@ async fn source_errors_keep_their_io_kind() {
 
 #[tokio::test]
 async fn checksum_corruption_is_rejected_before_yield() {
-    let mut raw = one_file(Format::Tar, b"x").await;
+    let mut raw = one_file(false, b"x").await;
     raw[0] ^= 1;
     let mut reader = Reader::open(Cursor::new(raw), ReadLimits::default())
         .await
@@ -114,8 +114,11 @@ async fn checksum_corruption_is_rejected_before_yield() {
 
 #[tokio::test]
 async fn oversized_entry_is_rejected_before_yield() {
-    let raw = one_file(Format::Tar, b"0123456789").await;
-    let limits = ReadLimits::default().with_max_entry_bytes(4);
+    let raw = one_file(false, b"0123456789").await;
+    let limits = ReadLimits {
+        max_entry_bytes: 4,
+        ..ReadLimits::default()
+    };
     let mut reader = Reader::open(Cursor::new(raw), limits)
         .await
         .expect("reader");
@@ -127,10 +130,10 @@ async fn oversized_entry_is_rejected_before_yield() {
 
 #[tokio::test]
 async fn truncated_body_is_not_a_clean_end() {
-    let raw = one_file(Format::Tar, &[7u8; 16]).await;
+    let raw = one_file(false, &[7u8; 16]).await;
     let truncated = raw[..512 + 8].to_vec();
     assert!(
-        validate(Cursor::new(truncated), ReadLimits::default())
+        common::drain(truncated, ReadLimits::default())
             .await
             .is_err()
     );
@@ -138,19 +141,15 @@ async fn truncated_body_is_not_a_clean_end() {
 
 #[tokio::test]
 async fn zstd_trailing_garbage_is_rejected() {
-    let mut raw = one_file(Format::TarZstd, b"x").await;
+    let mut raw = one_file(true, b"x").await;
     raw.extend_from_slice(b"garbage");
-    assert!(
-        validate(Cursor::new(raw), ReadLimits::default())
-            .await
-            .is_err()
-    );
+    assert!(common::drain(raw, ReadLimits::default()).await.is_err());
 }
 
 #[tokio::test]
 async fn cancelled_append_aborts_the_writer() {
     let (body, _sender) = tokio::io::duplex(16);
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     let path = EntryPath::new("file").expect("path");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let entry = WriteEntry::file(path, meta, 1, body).expect("entry");

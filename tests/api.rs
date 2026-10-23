@@ -1,20 +1,19 @@
-use etar::{
-    EntryPath, Error, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer, validate,
-};
+use etar::{EntryPath, Error, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::Cursor;
 use tokio::io::AsyncReadExt;
 
+mod common;
+
 #[tokio::test]
 async fn writer_and_reader_round_trip_one_file() {
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     let path = EntryPath::new("hello.txt").expect("path");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let file = WriteEntry::file(path, meta, 5, Cursor::new(b"hello")).expect("file");
     writer.append(file).await.expect("append");
     let output = writer.finish().await.expect("finish");
-    assert_eq!(output.encoded_bytes as usize, output.sink.len());
 
-    let mut reader = Reader::open(Cursor::new(output.sink), ReadLimits::default())
+    let mut reader = Reader::open(Cursor::new(output), ReadLimits::default())
         .await
         .expect("reader");
     let mut entry = reader.next_entry().await.expect("entry").expect("file");
@@ -26,8 +25,8 @@ async fn writer_and_reader_round_trip_one_file() {
     assert!(reader.next_entry().await.expect("end").is_none());
 }
 
-async fn archive(format: Format, body: &[u8]) -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), format);
+async fn archive(zstd: bool, body: &[u8]) -> Vec<u8> {
+    let mut writer = common::writer(zstd);
     let path = EntryPath::new("data/file").expect("path");
     let meta = Meta::new(0o640, 12, 34, 56, Kind::File);
     writer
@@ -37,27 +36,25 @@ async fn archive(format: Format, body: &[u8]) -> Vec<u8> {
         )
         .await
         .expect("append");
-    writer.finish().await.expect("finish").sink
+    writer.finish().await.expect("finish")
 }
 
 #[tokio::test]
-async fn compressed_archive_round_trips_and_validates() {
-    let bytes = archive(Format::TarZstd, b"compressed body").await;
-    let report = validate(Cursor::new(bytes.clone()), ReadLimits::default())
+async fn compressed_archive_round_trips() {
+    let bytes = archive(true, b"compressed body").await;
+    let entries = common::drain(bytes, ReadLimits::default())
         .await
         .expect("valid archive");
-    assert_eq!(report.entries, 1);
-    assert_eq!(report.encoded_bytes as usize, bytes.len());
-    assert!(report.decoded_bytes > report.encoded_bytes);
+    assert_eq!(entries, 1);
 }
 
 #[tokio::test]
 async fn missing_tar_end_blocks_are_rejected() {
-    let bytes = archive(Format::Tar, b"body").await;
+    let bytes = archive(false, b"body").await;
     for cut in [512, 1024] {
         let truncated = bytes[..bytes.len() - cut].to_vec();
         assert!(
-            validate(Cursor::new(truncated), ReadLimits::default())
+            common::drain(truncated, ReadLimits::default())
                 .await
                 .is_err()
         );
@@ -66,23 +63,19 @@ async fn missing_tar_end_blocks_are_rejected() {
 
 #[tokio::test]
 async fn nonzero_tar_trailer_is_rejected() {
-    let mut bytes = archive(Format::Tar, b"body").await;
+    let mut bytes = archive(false, b"body").await;
     bytes.extend_from_slice(b"hidden payload");
     assert!(matches!(
-        validate(Cursor::new(bytes), ReadLimits::default()).await,
+        common::drain(bytes, ReadLimits::default()).await,
         Err(Error::Malformed)
     ));
 }
 
 #[tokio::test]
 async fn truncated_zstd_footer_is_rejected() {
-    let mut bytes = archive(Format::TarZstd, b"body").await;
+    let mut bytes = archive(true, b"body").await;
     bytes.pop();
-    assert!(
-        validate(Cursor::new(bytes), ReadLimits::default())
-            .await
-            .is_err()
-    );
+    assert!(common::drain(bytes, ReadLimits::default()).await.is_err());
 }
 
 #[tokio::test]
@@ -90,20 +83,20 @@ async fn empty_consecutive_zstd_frame_is_verified() {
     use async_compression::tokio::write::ZstdEncoder;
     use tokio::io::AsyncWriteExt;
 
-    let mut bytes = archive(Format::TarZstd, b"body").await;
+    let mut bytes = archive(true, b"body").await;
     let mut encoder = ZstdEncoder::new(Vec::new());
     encoder.shutdown().await.expect("empty frame");
     bytes.extend_from_slice(&encoder.into_inner());
-    let report = validate(Cursor::new(bytes.clone()), ReadLimits::default())
+    let entries = common::drain(bytes, ReadLimits::default())
         .await
         .expect("valid consecutive frame");
-    assert_eq!(report.encoded_bytes as usize, bytes.len());
+    assert_eq!(entries, 1);
 }
 
 #[tokio::test]
 async fn writer_rejects_mismatched_body_length() {
     for declared in [2, 4] {
-        let mut writer = Writer::new(Vec::new(), Format::Tar);
+        let mut writer = Writer::tar(Vec::new());
         let path = EntryPath::new("a").expect("path");
         let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
         let entry =
@@ -159,10 +152,13 @@ async fn non_file_entries_with_bodies_are_rejected() {
 
 #[tokio::test]
 async fn reader_enforces_declared_limits() {
-    let bytes = archive(Format::Tar, b"long body").await;
-    let limits = ReadLimits::default().with_max_entry_bytes(3);
+    let bytes = archive(false, b"long body").await;
+    let limits = ReadLimits {
+        max_entry_bytes: 3,
+        ..ReadLimits::default()
+    };
     assert!(matches!(
-        validate(Cursor::new(bytes), limits).await,
+        common::drain(bytes, limits).await,
         Err(Error::LimitExceeded("max_entry_bytes"))
     ));
 }
@@ -175,13 +171,13 @@ async fn non_utf8_path_bytes_survive_round_trip() {
 
     let name = OsStr::from_bytes(b"a/\xff");
     let path = EntryPath::new(name).expect("path");
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     writer
         .append(WriteEntry::file(path, meta, 1, Cursor::new(b"x".to_vec())).expect("file"))
         .await
         .expect("append");
-    let bytes = writer.finish().await.expect("finish").sink;
+    let bytes = writer.finish().await.expect("finish");
     let mut reader = Reader::open(Cursor::new(bytes), ReadLimits::default())
         .await
         .expect("reader");
@@ -203,24 +199,12 @@ async fn extension_size_is_capped_before_it_is_buffered() {
     header.set_cksum();
     let mut raw = header.as_bytes().to_vec();
     raw.extend_from_slice(&[0u8; 1024]);
-    let limits = ReadLimits::default().with_max_metadata_bytes(1024);
-    let mut reader = Reader::open(Cursor::new(raw), limits)
+    let mut reader = Reader::open(Cursor::new(raw), ReadLimits::default())
         .await
         .expect("reader");
     assert!(matches!(
         reader.next_entry().await,
         Err(Error::LimitExceeded("max_metadata_bytes"))
-    ));
-}
-
-#[tokio::test]
-async fn validator_reports_ratio_limit_as_a_domain_error() {
-    let body = vec![0u8; 16 * 1024 * 1024];
-    let bytes = archive(Format::TarZstd, &body).await;
-    let limits = ReadLimits::default().with_max_compression_ratio(10);
-    assert!(matches!(
-        validate(Cursor::new(bytes), limits).await,
-        Err(Error::LimitExceeded("max_compression_ratio"))
     ));
 }
 
