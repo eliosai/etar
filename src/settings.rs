@@ -58,12 +58,11 @@ pub mod erofs {
     pub const VERSION: &str = "1.9.4";
     /// Fixed mkfs.erofs flags ahead of the image path: tar on stdin, zstd 64 KiB clusters,
     /// clear UUID, zero timestamps, two workers
-    pub const ARGS: [&str; 9] = [
+    pub const ARGS: [&str; 8] = [
         "--quiet",
         "--tar=f",
         "-zzstd,level=3",
         "-C65536",
-        "-E48bit",
         "--workers=2",
         "-Uclear",
         "-T0",
