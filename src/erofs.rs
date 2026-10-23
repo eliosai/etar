@@ -72,6 +72,7 @@ impl Erofs {
 
 /// One running image build fed entries in archive order
 pub struct ErofsBuild {
+    // Fields drop in order, so mkfs.erofs dies before the image closes
     child: Child,
     tar: Writer<BufWriter<ChildStdin>>,
     stderr: Option<JoinHandle<Vec<u8>>>,
