@@ -43,7 +43,7 @@ impl Erofs {
     }
 
     /// Start one image build; dropping the build kills mkfs.erofs and frees its image
-    pub fn build(&self) -> Result<ErofsBuild, Error> {
+    pub async fn build(&self) -> Result<ErofsBuild, Error> {
         let image = tempfile::tempfile_in(&self.scratch)?;
         let output = format!("/proc/{}/fd/{}", std::process::id(), image.as_raw_fd());
         let mut child = Command::new(&self.program)

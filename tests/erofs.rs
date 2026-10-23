@@ -69,7 +69,7 @@ async fn sample(build: &mut ErofsBuild) {
 }
 
 async fn sample_image(scratch: &Path) -> Vec<u8> {
-    let mut build = erofs(scratch).await.build().expect("build");
+    let mut build = erofs(scratch).await.build().await.expect("build");
     sample(&mut build).await;
     let mut image = build.finish().await.expect("finish");
     let mut bytes = Vec::new();
@@ -146,7 +146,7 @@ async fn the_same_stream_builds_the_same_image() {
 #[tokio::test]
 async fn implied_parents_are_created() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().expect("build");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
     file(&mut build, "a/b/c", 0o644, b"deep".to_vec()).await;
     let mut image = Vec::new();
     let mut file = build.finish().await.expect("finish");
@@ -161,7 +161,7 @@ async fn implied_parents_are_created() {
 #[tokio::test]
 async fn scratch_holds_no_file_during_or_after_a_build() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().expect("build");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
     sample(&mut build).await;
     assert_eq!(scratch_files(scratch.path()), 0);
     let image = build.finish().await.expect("finish");
@@ -174,7 +174,7 @@ async fn dropping_a_build_kills_mkfs_and_leaves_scratch_empty() {
     let scratch = tempfile::tempdir().expect("scratch");
     let erofs = erofs(scratch.path()).await;
     for _ in 0..8 {
-        let mut build = erofs.build().expect("build");
+        let mut build = erofs.build().await.expect("build");
         file(&mut build, "half", 0o644, noise(1024 * 1024, 1)).await;
         assert_eq!(running_mkfs(), 1);
         drop(build);
@@ -204,7 +204,7 @@ fn running_mkfs() -> usize {
 #[tokio::test]
 async fn a_truncated_stream_never_yields_an_image() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().expect("build");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
     file(&mut build, "whole", 0o644, b"kept".to_vec()).await;
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let path = EntryPath::new("short").expect("path");
@@ -234,7 +234,7 @@ async fn a_failed_mkfs_surfaces_its_status_and_stderr() {
     let dir = tempfile::tempdir().expect("dir");
     let program = fake(dir.path(), "echo 'tar: bad header' >&2; exit 3");
     let erofs = Erofs::new(program, dir.path()).await.expect("erofs");
-    let mut build = erofs.build().expect("build");
+    let mut build = erofs.build().await.expect("build");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let body = noise(4 * 1024 * 1024, 3);
     let path = EntryPath::new("big").expect("path");
@@ -260,6 +260,7 @@ async fn a_failure_after_the_tar_closes_is_reported_by_finish() {
         .await
         .expect("erofs")
         .build()
+        .await
         .expect("build");
     file(&mut build, "f", 0o644, b"x".to_vec()).await;
     let result = build.finish().await;
@@ -308,7 +309,7 @@ async fn stamped(build: &mut ErofsBuild, name: &str, meta: Meta) {
 #[tokio::test]
 async fn modes_mtimes_and_links_survive_the_image() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().expect("build");
+    let mut build = erofs(scratch.path()).await.build().await.expect("build");
     let target = PathBuf::from(format!("{}/{}", "d".repeat(70), "t".repeat(79)));
     let symlink = Kind::Symlink {
         target: target.clone(),

@@ -6,7 +6,7 @@ The public operations use the same entry vocabulary:
 | --- | --- | --- |
 | `Writer::tar(sink)` | An `AsyncWrite` sink | `finish()` writes the tar end blocks, shuts the sink down, and returns it |
 | `Writer::tar_zst(sink)` | An `AsyncWrite` sink | As `tar`, inside one zstd frame at level 3 compressed on the calling task |
-| `Erofs::new(program, scratch)`, then `build()` | A pinned mkfs.erofs 1.9.4 and a scratch directory, behind the `erofs` feature | `finish()` returns the image rewound to its start once mkfs.erofs exits cleanly |
+| `Erofs::new(program, scratch)`, then `build().await` | A pinned mkfs.erofs 1.9.4 and a scratch directory, behind the `erofs` feature | `finish()` returns the image rewound to its start once mkfs.erofs exits cleanly |
 | `Reader::open(source, limits)` | An `AsyncRead` source, plain or zstd | `next_entry()` yields one borrowed body; `Ok(None)` means the whole archive passed trailer validation |
 
 `Meta::mtime_nanos` holds the nanoseconds past `mtime_unix_secs` and must stay
