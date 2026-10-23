@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the pinned erofs-utils into target/tools/erofs-<version> with zstd as the only compressor
+# Build the pinned erofs-utils into target/tools/erofs-<version> with zstd and built-in deflate
 set -euo pipefail
 
 version=1.9.4

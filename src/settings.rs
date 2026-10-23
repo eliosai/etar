@@ -56,8 +56,7 @@ pub mod pax {
 pub mod erofs {
     /// The only mkfs.erofs version an image build accepts
     pub const VERSION: &str = "1.9.4";
-    /// Fixed mkfs.erofs flags ahead of the image path: tar on stdin, zstd 64 KiB clusters,
-    /// clear UUID, zero timestamps, two workers
+    /// mkfs.erofs flags: stdin tar, zstd 64 KiB clusters, clear UUID, zero build time, two workers
     pub const ARGS: [&str; 8] = [
         "--quiet",
         "--tar=f",
