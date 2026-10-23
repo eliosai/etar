@@ -3,21 +3,21 @@
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use etar::{EntryPath, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
+use etar::{EntryPath, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::Cursor;
 
 const ENTRIES: usize = 1_000;
 
 #[tokio::test]
 async fn reading_many_empty_files_has_bounded_allocations() {
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     for number in 0..ENTRIES {
         let path = EntryPath::new(format!("files/{number}")).expect("path");
         let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
         let entry = WriteEntry::file(path, meta, 0, Cursor::new(Vec::new())).expect("entry");
         writer.append(entry).await.expect("append");
     }
-    let archive = writer.finish().await.expect("finish").sink;
+    let archive = writer.finish().await.expect("finish");
 
     let profiler = dhat::Profiler::builder().testing().build();
     let mut reader = Reader::open(Cursor::new(archive), ReadLimits::default())

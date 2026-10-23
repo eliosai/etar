@@ -3,7 +3,7 @@
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use etar::{EntryPath, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
+use etar::{EntryPath, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::Cursor;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -28,7 +28,7 @@ fn huge_entry() -> WriteEntry<tokio::io::Take<tokio::io::Repeat>> {
 async fn test_pack_and_open_heap_stay_under_budget() {
     let pack_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
-        let mut writer = Writer::new(tokio::io::sink(), Format::Tar);
+        let mut writer = Writer::tar(tokio::io::sink());
         writer.append(huge_entry()).await.unwrap();
         writer.finish().await.unwrap();
         let peak = dhat::HeapStats::get().max_bytes;
@@ -38,16 +38,19 @@ async fn test_pack_and_open_heap_stay_under_budget() {
     assert!(pack_peak < BUDGET, "pack peak heap {pack_peak} >= {BUDGET}");
 
     let tar = {
-        let mut writer = Writer::new(Vec::new(), Format::Tar);
+        let mut writer = Writer::tar(Vec::new());
         writer.append(huge_entry()).await.unwrap();
-        writer.finish().await.unwrap().sink
+        writer.finish().await.unwrap()
     };
 
     let open_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
         let mut reader = Reader::open(
             Cursor::new(tar),
-            ReadLimits::default().with_max_total_bytes(HUGE * 2),
+            ReadLimits {
+                max_total_bytes: HUGE * 2,
+                ..ReadLimits::default()
+            },
         )
         .await
         .unwrap();
@@ -62,7 +65,7 @@ async fn test_pack_and_open_heap_stay_under_budget() {
 
     let slow_peak = {
         let profiler = dhat::Profiler::builder().testing().build();
-        let mut writer = Writer::new(ThrottledSink::default(), Format::Tar);
+        let mut writer = Writer::tar(ThrottledSink::default());
         writer.append(huge_entry()).await.unwrap();
         writer.finish().await.unwrap();
         let peak = dhat::HeapStats::get().max_bytes;

@@ -18,11 +18,8 @@ pub enum Error {
     /// The path contains a NUL byte
     #[error("nul byte in path")]
     NulPath,
-    /// A file entry arrived without a body
-    #[error("missing file body")]
-    MissingBody,
-    /// A non-file entry carried a body or nonzero size
-    #[error("non-file entry has a body or nonzero size")]
+    /// A non-file archive entry declared a nonzero size
+    #[error("non-file entry has a nonzero size")]
     NonFilePayload,
     /// The constructor received metadata for another entry kind
     #[error("entry kind does not match constructor")]
@@ -51,12 +48,6 @@ pub enum Error {
     /// The mtime nanoseconds are one billion or more
     #[error("mtime nanoseconds must be below 1000000000")]
     InvalidMtimeNanos,
-    /// The zstd level is outside zstd's supported range
-    #[error("zstd level {0} is outside -131072..=22")]
-    InvalidZstdLevel(i32),
-    /// The zstd worker count exceeds the supported maximum
-    #[error("zstd worker count {0} exceeds 256")]
-    InvalidZstdWorkers(u32),
     /// A source, sink, or scratch operation failed
     #[error(transparent)]
     Io(#[from] io::Error),

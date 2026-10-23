@@ -1,4 +1,8 @@
 //! Hand-built PAX archives shared by integration tests
+#![allow(
+    dead_code,
+    reason = "each test binary uses a different subset of the shared helpers"
+)]
 
 use tokio_tar::{Builder, EntryType, Header};
 
@@ -38,4 +42,23 @@ pub async fn pax_tar(records: Vec<u8>, header_mtime: u64) -> Vec<u8> {
         .await
         .expect("file");
     builder.into_inner().await.expect("finish")
+}
+
+/// A writer over a vector, compressed with zstd when `zstd`
+pub fn writer(zstd: bool) -> etar::Writer<Vec<u8>> {
+    match zstd {
+        true => etar::Writer::tar_zst(Vec::new()),
+        false => etar::Writer::tar(Vec::new()),
+    }
+}
+
+/// Read every header and body to the verified end, returning the entry count
+pub async fn drain(bytes: Vec<u8>, limits: etar::ReadLimits) -> Result<u64, etar::Error> {
+    let mut reader = etar::Reader::open(std::io::Cursor::new(bytes), limits).await?;
+    let mut entries = 0;
+    while let Some(mut entry) = reader.next_entry().await? {
+        tokio::io::copy(&mut entry, &mut tokio::io::sink()).await?;
+        entries += 1;
+    }
+    Ok(entries)
 }

@@ -1,8 +1,10 @@
-//! zstd level and worker selection at the public writer boundary
+//! tar.zst output at the public writer boundary
 
-use etar::{EntryPath, Error, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer, Zstd};
+use etar::{EntryPath, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
 use std::io::Cursor;
 use tokio::io::AsyncReadExt;
+
+mod common;
 
 fn body() -> Vec<u8> {
     (0..600_000u32)
@@ -37,44 +39,31 @@ async fn read_all(archive: Vec<u8>) -> Vec<(Vec<u8>, Vec<u8>)> {
     out
 }
 
-async fn write_with(zstd: Zstd) -> Vec<u8> {
-    let mut writer = Writer::with_zstd(Vec::new(), zstd);
-    append_sample(&mut writer, &body()).await;
-    writer.finish().await.expect("finish").sink
+#[tokio::test]
+async fn tar_zst_round_trips_to_the_tar_entries() {
+    let mut tar = Writer::tar(Vec::new());
+    append_sample(&mut tar, &body()).await;
+    let tar = tar.finish().await.expect("finish");
+    let mut zst = Writer::tar_zst(Vec::new());
+    append_sample(&mut zst, &body()).await;
+    let zst = zst.finish().await.expect("finish");
+    assert_eq!(zst[..4], [0x28, 0xB5, 0x2F, 0xFD]);
+    assert!(zst.len() < tar.len());
+    assert_eq!(read_all(zst).await, read_all(tar).await);
 }
 
 #[tokio::test]
-async fn chosen_levels_and_workers_round_trip_to_identical_entries() {
-    let expected = read_all(write_with(Zstd::default()).await).await;
-    for (level, workers) in [(1, 0), (1, 4), (19, 2), (-5, 1)] {
-        let zstd = Zstd::new(level, workers).expect("valid options");
-        let archive = write_with(zstd).await;
-        assert_eq!(archive[..4], [0x28, 0xB5, 0x2F, 0xFD]);
-        assert_eq!(
-            read_all(archive).await,
-            expected,
-            "level {level} workers {workers}"
-        );
-    }
+async fn tar_zst_output_is_deterministic() {
+    let mut first = Writer::tar_zst(Vec::new());
+    append_sample(&mut first, &body()).await;
+    let mut second = Writer::tar_zst(Vec::new());
+    append_sample(&mut second, &body()).await;
+    let first = first.finish().await.expect("finish");
+    assert_eq!(first, second.finish().await.expect("finish"));
 }
 
-#[tokio::test]
-async fn default_options_match_format_tar_zstd() {
-    let mut writer = Writer::new(Vec::new(), Format::TarZstd);
-    append_sample(&mut writer, &body()).await;
-    let plain = writer.finish().await.expect("finish").sink;
-    assert_eq!(write_with(Zstd::default()).await, plain);
-}
-
-#[tokio::test]
-async fn higher_level_compresses_smaller() {
-    let fast = write_with(Zstd::new(1, 0).expect("level 1")).await;
-    let slow = write_with(Zstd::new(19, 0).expect("level 19")).await;
-    assert!(slow.len() <= fast.len());
-}
-
-async fn small_files(format: Format) -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), format);
+async fn small_files(zstd: bool) -> Vec<u8> {
+    let mut writer = common::writer(zstd);
     for n in 0..1000 {
         let path = EntryPath::new(format!("d/file-{n:05}")).expect("path");
         let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
@@ -83,7 +72,7 @@ async fn small_files(format: Format) -> Vec<u8> {
         let entry = WriteEntry::file(path, meta, size, Cursor::new(body)).expect("file");
         writer.append(entry).await.expect("append");
     }
-    writer.finish().await.expect("finish").sink
+    writer.finish().await.expect("finish")
 }
 
 #[tokio::test]
@@ -92,35 +81,15 @@ async fn many_small_files_compress_like_one_stream_of_the_tar() {
     use tokio::io::AsyncWriteExt;
     let mut whole = ZstdEncoder::new(Vec::new());
     whole
-        .write_all(&small_files(Format::Tar).await)
+        .write_all(&small_files(false).await)
         .await
         .expect("write");
     whole.shutdown().await.expect("shutdown");
-    let (whole, archive) = (whole.into_inner(), small_files(Format::TarZstd).await);
+    let (whole, archive) = (whole.into_inner(), small_files(true).await);
     assert!(
         archive.len() <= whole.len() * 2,
         "{} bytes against {} for one stream",
         archive.len(),
         whole.len()
     );
-}
-
-#[test]
-fn out_of_range_level_is_a_typed_error() {
-    assert!(matches!(Zstd::new(23, 0), Err(Error::InvalidZstdLevel(23))));
-    assert!(matches!(
-        Zstd::new(-131_073, 0),
-        Err(Error::InvalidZstdLevel(-131_073))
-    ));
-    assert!(Zstd::new(22, 0).is_ok());
-    assert!(Zstd::new(-131_072, 0).is_ok());
-}
-
-#[test]
-fn worker_count_beyond_the_bound_is_a_typed_error() {
-    assert!(matches!(
-        Zstd::new(3, 257),
-        Err(Error::InvalidZstdWorkers(257))
-    ));
-    assert!(Zstd::new(3, 256).is_ok());
 }

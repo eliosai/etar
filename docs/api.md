@@ -4,18 +4,9 @@ The public operations use the same entry vocabulary:
 
 | Operation | Input | Completion |
 | --- | --- | --- |
-| `Writer::new(sink, format)` | An `AsyncWrite` sink and `Tar` or `TarZstd` | `finish()` returns the finalized sink and encoded byte count |
-| `Writer::with_zstd(sink, zstd)` | An `AsyncWrite` sink and a checked `Zstd` | Writes tar.zst at that level and worker count; `finish()` completes it |
-| `Reader::open(source, limits)` | An `AsyncRead` source | `next_entry()` yields one borrowed body; `Ok(None)` means the whole archive passed trailer validation |
-| `validate(source, limits)` | An `AsyncRead` source | Returns entry and byte counts after consuming every body and the trailer |
-
-`Zstd::new(level, workers)` accepts levels `-131072..=22` (`0` selects zstd's
-default) and `0..=256` workers; anything else returns
-`Error::InvalidZstdLevel` or `Error::InvalidZstdWorkers`. Zero workers
-compress on the calling task. A positive count hands compression to that many
-zstd threads, which pays off for large archives. `Writer::new(sink,
-Format::TarZstd)` uses `Zstd::default()`, level 3 with no workers. Any level
-or worker count produces a standard zstd frame that `Reader` opens.
+| `Writer::tar(sink)` | An `AsyncWrite` sink | `finish()` writes the tar end blocks, shuts the sink down, and returns it |
+| `Writer::tar_zst(sink)` | An `AsyncWrite` sink | As `tar`, inside one zstd frame at level 3 compressed on the calling task |
+| `Reader::open(source, limits)` | An `AsyncRead` source, plain or zstd | `next_entry()` yields one borrowed body; `Ok(None)` means the whole archive passed trailer validation |
 
 `Meta::mtime_nanos` holds the nanoseconds past `mtime_unix_secs` and must stay
 below one billion; `Meta::with_mtime_nanos` sets it, and the writer returns
@@ -32,9 +23,9 @@ name. `Meta::with_xattr` sets one. The writer emits each as a PAX
 and entries without attributes get no PAX header. `WriteEntry::file` and
 `WriteEntry::metadata` return `Error::InvalidXattr` for an empty name or a name
 containing `=` or NUL. PAX reads an empty value as a deletion, so the writer
-leaves out an attribute whose value is empty. The reader surfaces `SCHILY.xattr.*` records
-and `LIBARCHIVE.xattr.<percent-encoded name>=<base64 value>` records; other PAX
-keys are ignored, and a malformed encoding is `Error::Malformed`.
+leaves out an attribute whose value is empty. The reader surfaces
+`SCHILY.xattr.*` records and ignores every other PAX key; an empty name is
+`Error::Malformed`.
 
 `WriteEntry::file` requires `Kind::File`, a declared size, and a finite body.
 `WriteEntry::metadata` accepts a directory, link, device, or fifo and has no
@@ -57,25 +48,21 @@ partial.
 `EntryPath::new` rejects empty, absolute, parent-ascending, or NUL-bearing
 paths. It preserves non-UTF-8 bytes on Unix. `.` names the in-tree root.
 Treat link targets in `Kind::Symlink` and `Kind::Hardlink` as untrusted bytes.
-Validate them against your destination root before creating links.
+Validate them against your destination root before creating links. The writer
+stores a target longer than the 100-byte ustar field in a PAX `linkpath`
+record.
 
-`ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of
-decoded tar bytes, 1 MiB per GNU/PAX extension record, 4096 path bytes,
-64 KiB of extended attribute names and values per entry, and a 200:1
-decompression ratio. The decoded-byte cap includes tar headers
-and padding. The ratio guard starts after 8 MiB of decoded output. Links
-may be disabled independently. Extension size is checked before the parser
-buffers its payload. Tighten these limits to match the caller's workload.
-Regular files, directories, symlinks, and hardlinks are supported. Character
-devices, block devices, and fifos surface as `Kind::CharDevice`,
-`Kind::BlockDevice`, and `Kind::Fifo` only under
-`ReadLimits::with_special_files(true)`; by default they are
-`Error::DisallowedEntryType`. Sparse and global PAX entries are rejected.
-Directory, link, device, and fifo entries with nonzero body lengths are
-rejected.
+`ReadLimits` defaults to 2 million entries, 8 GiB per entry, 32 GiB of decoded
+tar bytes, 4096 bytes per entry path or link target, and 64 KiB of extended
+attribute names and values per entry. The decoded-byte cap includes tar headers
+and padding. Every GNU or PAX extension record stops at 1 MiB, checked before
+the parser buffers its payload. Regular files, directories, symlinks,
+hardlinks, character devices, block devices, and fifos surface as their `Kind`.
+Sparse members, including PAX `GNU.sparse.*` records, global PAX headers, and
+other entry types are `Error::DisallowedEntryType`. Directory, link, device,
+and fifo entries with nonzero body lengths are rejected.
 
 Transport failures remain `Error::Io` with their original I/O kind. Header
 and trailer failures are `Error::Malformed`; unsafe paths and limit breaches
 have named variants. Direct body reads use `AsyncRead` and therefore return
-`io::Error`. `validate` maps a body limit breach back to
-`Error::LimitExceeded`.
+`io::Error`.

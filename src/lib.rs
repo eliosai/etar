@@ -13,19 +13,14 @@ mod reader;
 mod settings;
 mod writer;
 mod xattr;
-mod zstd;
 
 #[doc(inline)]
-pub use entry::SafePath as EntryPath;
-#[doc(inline)]
-pub use entry::{Kind, Meta};
+pub use entry::{EntryPath, Kind, Meta};
 #[doc(inline)]
 pub use error::Error;
 #[doc(inline)]
-pub use limits::SecurityLimits as ReadLimits;
+pub use limits::ReadLimits;
 #[doc(inline)]
-pub use reader::{EntryHeader, ReadEntry, Reader, ValidationReport, validate};
+pub use reader::{EntryHeader, ReadEntry, Reader};
 #[doc(inline)]
-pub use writer::{Format, WriteEntry, WriteOutput, Writer};
-#[doc(inline)]
-pub use zstd::Zstd;
+pub use writer::{WriteEntry, Writer};
