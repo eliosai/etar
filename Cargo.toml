@@ -36,7 +36,7 @@ authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Bounded streaming reader, writer, and validator for tar and tar.zst"
+description = "Bounded streaming reader and writer for tar and tar.zst"
 readme = "README.md"
 include = ["/src/**", "/tests/**", "/benches/**", "/README.md", "/LICENSE", "/docs/**"]
 
