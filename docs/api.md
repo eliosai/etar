@@ -72,10 +72,11 @@ have named variants. Direct body reads use `AsyncRead` and therefore return
 `io::Error`.
 
 `Erofs::new` runs `program -V` and returns `Error::ErofsVersion` unless the
-banner names 1.9.4. `Erofs::build` opens an unlinked image file in scratch and
-starts mkfs.erofs with the tar on stdin, the image as its output, and scratch
-as its `TMPDIR`. `ErofsBuild::append` takes the same `WriteEntry` values as
-`Writer`. A non-zero exit becomes `Error::Erofs` with the exit status and the
-last 4 KiB of stderr. `finish` returns `Error::Aborted` after a failed append,
-so a truncated tar never yields an image. Dropping a build, finished or not,
-kills mkfs.erofs and frees the image.
+banner's version is exactly 1.9.4. `Erofs::build` opens an unlinked image file
+in scratch and starts mkfs.erofs with the tar on stdin, the image as its
+output, and scratch as its `TMPDIR`. `ErofsBuild::append` takes the same
+`WriteEntry` values as `Writer`. A non-zero exit becomes `Error::Erofs` with
+the exit status and the last 4 KiB of stderr. After a failed or cancelled
+append, `finish` returns `Error::Erofs` if mkfs.erofs rejects the truncated tar
+and `Error::Aborted` otherwise, so a truncated tar never yields an image.
+Dropping a build kills mkfs.erofs and frees the image.
