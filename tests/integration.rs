@@ -1,6 +1,6 @@
 //! Archive interoperability with object_store, GNU tar, and mkfs.erofs
 
-use etar::{EntryPath, Format, Kind, Meta, ReadEntry, ReadLimits, Reader, WriteEntry, Writer};
+use etar::{EntryPath, Kind, Meta, ReadEntry, ReadLimits, Reader, WriteEntry, Writer};
 use object_store::buffered::{BufReader, BufWriter};
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
@@ -51,9 +51,9 @@ where
 }
 
 async fn pack_sample() -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     append_sample(&mut writer).await;
-    writer.finish().await.expect("finish").sink
+    writer.finish().await.expect("finish")
 }
 
 async fn read_entry(mut entry: ReadEntry<'_>) -> (String, Kind, Vec<u8>) {
@@ -69,7 +69,7 @@ async fn object_store_round_trip() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let path = ObjectPath::from("exports/fs.tar");
     let sink = BufWriter::new(store.clone(), path.clone());
-    let mut writer = Writer::new(sink, Format::Tar);
+    let mut writer = Writer::tar(sink);
     append_sample(&mut writer).await;
     writer.finish().await.expect("finish");
 
@@ -144,7 +144,7 @@ async fn etar_reads_gnu_tar_output() {
 async fn mkfs_erofs_consumes_etar_tar() {
     let dir = tempfile::tempdir().expect("tempdir");
     let tar = dir.path().join("rootfs.tar");
-    let mut writer = Writer::new(Vec::new(), Format::Tar);
+    let mut writer = Writer::tar(Vec::new());
     let path = EntryPath::new("f").expect("path");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     writer
@@ -153,7 +153,7 @@ async fn mkfs_erofs_consumes_etar_tar() {
         )
         .await
         .expect("append");
-    std::fs::write(&tar, writer.finish().await.expect("finish").sink).expect("write tar");
+    std::fs::write(&tar, writer.finish().await.expect("finish")).expect("write tar");
     let image = dir.path().join("rootfs.erofs");
     let output = Command::new("mkfs.erofs")
         .arg("--tar=f")

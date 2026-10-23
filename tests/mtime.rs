@@ -1,6 +1,6 @@
 //! Sub-second mtime through PAX at the public reader and writer
 
-use etar::{EntryPath, Error, Format, Kind, Meta, ReadLimits, Reader, WriteEntry, Writer};
+use etar::{EntryPath, Error, Kind, Meta, ReadLimits, Reader, WriteEntry};
 use std::io::Cursor;
 use tokio::io::AsyncReadExt;
 use tokio_tar::{Builder, EntryType, Header};
@@ -8,12 +8,12 @@ use tokio_tar::{Builder, EntryType, Header};
 mod common;
 use common::{pax_record, pax_tar};
 
-async fn write(format: Format, meta: Meta) -> Vec<u8> {
-    let mut writer = Writer::new(Vec::new(), format);
+async fn write(zstd: bool, meta: Meta) -> Vec<u8> {
+    let mut writer = common::writer(zstd);
     let path = EntryPath::new("f").expect("path");
     let entry = WriteEntry::file(path, meta, 2, Cursor::new(b"hi".to_vec())).expect("file");
     writer.append(entry).await.expect("append");
-    writer.finish().await.expect("finish").sink
+    writer.finish().await.expect("finish")
 }
 
 async fn read_mtime(archive: Vec<u8>) -> Result<(u64, u32), Error> {
@@ -31,9 +31,9 @@ fn file_meta(secs: u64) -> Meta {
 
 #[tokio::test]
 async fn nonzero_fraction_round_trips() {
-    for format in [Format::Tar, Format::TarZstd] {
+    for zstd in [false, true] {
         let meta = file_meta(1_700_000_000).with_mtime_nanos(123_456_789);
-        let archive = write(format, meta).await;
+        let archive = write(zstd, meta).await;
         assert_eq!(
             read_mtime(archive).await.expect("read"),
             (1_700_000_000, 123_456_789)
@@ -43,7 +43,7 @@ async fn nonzero_fraction_round_trips() {
 
 #[tokio::test]
 async fn small_fraction_keeps_leading_zeros() {
-    let archive = write(Format::Tar, file_meta(5).with_mtime_nanos(7)).await;
+    let archive = write(false, file_meta(5).with_mtime_nanos(7)).await;
     assert!(String::from_utf8_lossy(&archive).contains("mtime=5.000000007\n"));
     assert_eq!(read_mtime(archive).await.expect("read"), (5, 7));
 }
@@ -63,7 +63,7 @@ async fn whole_second_output_matches_the_plain_tar_layout() {
         .await
         .expect("append");
     let expected = builder.into_inner().await.expect("finish");
-    let actual = write(Format::Tar, file_meta(1_700_000_000)).await;
+    let actual = write(false, file_meta(1_700_000_000)).await;
     assert_eq!(actual, expected);
 }
 
@@ -125,7 +125,7 @@ async fn mtime_and_xattrs_read_back_together() {
     let meta = file_meta(10)
         .with_mtime_nanos(1)
         .with_xattr("user.a", b"v".to_vec());
-    let archive = write(Format::Tar, meta).await;
+    let archive = write(false, meta).await;
     let mut reader = Reader::open(Cursor::new(archive), ReadLimits::default())
         .await
         .expect("open");

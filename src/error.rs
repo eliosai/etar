@@ -51,12 +51,6 @@ pub enum Error {
     /// The mtime nanoseconds are one billion or more
     #[error("mtime nanoseconds must be below 1000000000")]
     InvalidMtimeNanos,
-    /// The zstd level is outside zstd's supported range
-    #[error("zstd level {0} is outside -131072..=22")]
-    InvalidZstdLevel(i32),
-    /// The zstd worker count exceeds the supported maximum
-    #[error("zstd worker count {0} exceeds 256")]
-    InvalidZstdWorkers(u32),
     /// A source, sink, or scratch operation failed
     #[error(transparent)]
     Io(#[from] io::Error),

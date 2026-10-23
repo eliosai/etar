@@ -1,28 +1,17 @@
 //! Tar entry encoding shared by both output formats
 
-use crate::entry::{Kind, Meta, SafePath};
+use crate::entry::{Kind, Meta};
 use crate::error::Error;
 use crate::pax;
 use crate::settings::device::MAX_NUMBER;
 use crate::settings::pax::HEADER_PATH;
+use crate::writer::WriteEntry;
 use pin_project_lite::pin_project;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio_tar::{Builder, EntryType, Header};
-
-/// One entry to pack: metadata, byte length, and a body for files
-pub struct PackEntry<B> {
-    /// The relative path under which the entry is stored
-    pub path: SafePath,
-    /// The entry's unix metadata
-    pub meta: Meta,
-    /// The body length, which the body must yield exactly
-    pub size: u64,
-    /// The body bytes for a file, absent for other kinds
-    pub body: Option<B>,
-}
 
 /// Build the header common to every kind from the entry metadata
 fn base_header(meta: &Meta) -> Header {
@@ -35,12 +24,12 @@ fn base_header(meta: &Meta) -> Header {
 }
 
 /// Append one entry, streaming a file body or emitting a metadata-only record
-pub async fn append<B, W>(builder: &mut Builder<W>, entry: PackEntry<B>) -> Result<(), Error>
+pub async fn append<B, W>(builder: &mut Builder<W>, entry: WriteEntry<B>) -> Result<(), Error>
 where
     B: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
-    let PackEntry {
+    let WriteEntry {
         path,
         meta,
         size,
@@ -244,7 +233,8 @@ fn length_mismatch() -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::limits::SecurityLimits;
+    use crate::entry::EntryPath;
+    use crate::limits::ReadLimits;
     use crate::reader::Reader;
     use pretty_assertions::assert_eq;
     use std::io::Cursor;
@@ -262,16 +252,16 @@ mod tests {
         }
     }
 
-    fn file_entry(path: &str, body: &[u8]) -> PackEntry<Cursor<Vec<u8>>> {
-        PackEntry {
-            path: SafePath::new(path).unwrap(),
+    fn file_entry(path: &str, body: &[u8]) -> WriteEntry<Cursor<Vec<u8>>> {
+        WriteEntry {
+            path: EntryPath::new(path).unwrap(),
             meta: meta(Kind::File),
             size: body.len() as u64,
             body: Some(Cursor::new(body.to_vec())),
         }
     }
 
-    async fn pack(entries: Vec<PackEntry<Cursor<Vec<u8>>>>) -> Result<Vec<u8>, Error> {
+    async fn pack(entries: Vec<WriteEntry<Cursor<Vec<u8>>>>) -> Result<Vec<u8>, Error> {
         let mut builder = Builder::new(Vec::new());
         for entry in entries {
             append(&mut builder, entry).await?;
@@ -279,8 +269,8 @@ mod tests {
         Ok(builder.into_inner().await?)
     }
 
-    async fn open_all(tar: Vec<u8>) -> Vec<(SafePath, Kind, Vec<u8>)> {
-        let mut reader = Reader::open(Cursor::new(tar), SecurityLimits::default())
+    async fn open_all(tar: Vec<u8>) -> Vec<(EntryPath, Kind, Vec<u8>)> {
+        let mut reader = Reader::open(Cursor::new(tar), ReadLimits::default())
             .await
             .unwrap();
         let mut out = Vec::new();
@@ -315,14 +305,14 @@ mod tests {
     async fn test_pack_open_round_trips_mixed_kinds() {
         let entries = vec![
             file_entry("etc/hosts", b"127.0.0.1 localhost"),
-            PackEntry {
-                path: SafePath::new("usr").unwrap(),
+            WriteEntry {
+                path: EntryPath::new("usr").unwrap(),
                 meta: meta(Kind::Dir),
                 size: 0,
                 body: None,
             },
-            PackEntry {
-                path: SafePath::new("bin/python").unwrap(),
+            WriteEntry {
+                path: EntryPath::new("bin/python").unwrap(),
                 meta: meta(Kind::Symlink {
                     target: "/usr/bin/python3".into(),
                 }),
@@ -344,8 +334,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_short_body_is_rejected() {
-        let entry = PackEntry {
-            path: SafePath::new("f").unwrap(),
+        let entry = WriteEntry {
+            path: EntryPath::new("f").unwrap(),
             meta: meta(Kind::File),
             size: 10,
             body: Some(Cursor::new(b"hello".to_vec())),
@@ -358,8 +348,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_without_body_is_rejected() {
-        let entry: PackEntry<Cursor<Vec<u8>>> = PackEntry {
-            path: SafePath::new("f").unwrap(),
+        let entry: WriteEntry<Cursor<Vec<u8>>> = WriteEntry {
+            path: EntryPath::new("f").unwrap(),
             meta: meta(Kind::File),
             size: 0,
             body: None,
@@ -386,14 +376,14 @@ mod tests {
             kind: Kind::File,
             xattrs: Default::default(),
         };
-        let entry = PackEntry {
-            path: SafePath::new("bin/sh").unwrap(),
+        let entry = WriteEntry {
+            path: EntryPath::new("bin/sh").unwrap(),
             meta: expected.clone(),
             size: 3,
             body: Some(Cursor::new(b"abc".to_vec())),
         };
         let tar = pack(vec![entry]).await.unwrap();
-        let mut reader = Reader::open(Cursor::new(tar), SecurityLimits::default())
+        let mut reader = Reader::open(Cursor::new(tar), ReadLimits::default())
             .await
             .unwrap();
         let opened = reader.next_entry().await.unwrap().unwrap();

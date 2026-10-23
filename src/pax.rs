@@ -2,7 +2,7 @@
 
 use crate::entry::Meta;
 use crate::error::Error;
-use crate::limits::SecurityLimits;
+use crate::limits::ReadLimits;
 use crate::mtime;
 use crate::settings::pax::{MTIME, NANOS_PER_SEC, SCHILY_XATTR};
 use crate::xattr::{self, Collector};
@@ -56,7 +56,7 @@ fn push_record(body: &mut Vec<u8>, key: &[u8], value: &[u8]) {
 }
 
 /// Read the extended attributes and mtime the entry's PAX header carries
-pub async fn read<R>(entry: &mut Entry<R>, limits: &SecurityLimits) -> Result<Extras, Error>
+pub async fn read<R>(entry: &mut Entry<R>, limits: &ReadLimits) -> Result<Extras, Error>
 where
     R: AsyncRead + Unpin,
 {

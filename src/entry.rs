@@ -6,9 +6,8 @@ use std::path::{Component, Path, PathBuf};
 
 /// Unix metadata describing one archive entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct Meta {
-    /// Permission and type bits
+    /// Permission, setuid, setgid, and sticky bits
     pub mode: u32,
     /// Owning user id
     pub uid: u32,
@@ -26,7 +25,6 @@ pub struct Meta {
 
 /// The kind of an archive entry
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Kind {
     /// A regular file carrying a body
     File,
@@ -104,9 +102,9 @@ impl Meta {
 /// assert!(matches!(EntryPath::new("../escape"), Err(Error::ParentEscape)));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SafePath(PathBuf);
+pub struct EntryPath(PathBuf);
 
-impl SafePath {
+impl EntryPath {
     /// Validate a path as relative, in-tree, and NUL-free under Linux path semantics
     pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
@@ -157,20 +155,20 @@ mod tests {
 
     #[test]
     fn test_safepath_accepts_relative() {
-        let actual = SafePath::new("bin/sh").unwrap();
+        let actual = EntryPath::new("bin/sh").unwrap();
         assert_eq!(actual.as_path(), Path::new("bin/sh"));
     }
 
     #[test]
     fn test_safepath_accepts_current_dir_prefix() {
-        let actual = SafePath::new("./bin/sh").unwrap();
+        let actual = EntryPath::new("./bin/sh").unwrap();
         assert_eq!(actual.as_path(), Path::new("./bin/sh"));
     }
 
     #[test]
     fn test_safepath_rejects_absolute() {
         assert!(matches!(
-            SafePath::new("/etc/passwd"),
+            EntryPath::new("/etc/passwd"),
             Err(Error::AbsolutePath)
         ));
     }
@@ -178,7 +176,7 @@ mod tests {
     #[test]
     fn test_safepath_rejects_leading_parent() {
         assert!(matches!(
-            SafePath::new("../../etc/passwd"),
+            EntryPath::new("../../etc/passwd"),
             Err(Error::ParentEscape)
         ));
     }
@@ -186,19 +184,19 @@ mod tests {
     #[test]
     fn test_safepath_rejects_embedded_parent() {
         assert!(matches!(
-            SafePath::new("a/../../b"),
+            EntryPath::new("a/../../b"),
             Err(Error::ParentEscape)
         ));
     }
 
     #[test]
     fn test_safepath_rejects_empty() {
-        assert!(matches!(SafePath::new(""), Err(Error::EmptyPath)));
+        assert!(matches!(EntryPath::new(""), Err(Error::EmptyPath)));
     }
 
     #[test]
     fn test_safepath_rejects_nul() {
-        assert!(matches!(SafePath::new("a\0b"), Err(Error::NulPath)));
+        assert!(matches!(EntryPath::new("a\0b"), Err(Error::NulPath)));
     }
 
     /// One path component biased toward the dangerous alphabet
@@ -210,7 +208,7 @@ mod tests {
         #[test]
         fn prop_rejected_iff_escape_present(parts in proptest::collection::vec(component(), 1..8)) {
             let raw = parts.join("/");
-            let result = SafePath::new(&raw);
+            let result = EntryPath::new(&raw);
             if parts.iter().any(|p| p == "..") {
                 prop_assert!(matches!(result, Err(Error::ParentEscape)));
             } else {
@@ -224,7 +222,7 @@ mod tests {
         #[test]
         fn prop_leading_slash_is_absolute(parts in proptest::collection::vec("[a-z]{1,5}", 1..6)) {
             let raw = format!("/{}", parts.join("/"));
-            prop_assert!(matches!(SafePath::new(&raw), Err(Error::AbsolutePath)));
+            prop_assert!(matches!(EntryPath::new(&raw), Err(Error::AbsolutePath)));
         }
     }
 }

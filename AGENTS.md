@@ -1,6 +1,6 @@
 # etar
 
-`etar` reads, writes, and validates raw tar and tar.zst over Tokio byte
+`etar` reads and writes raw tar and tar.zst over Tokio byte
 streams. The library never selects an object store, hashes content, or
 materializes archive paths. `object_store` is a dev dependency for the
 integration test, not part of the library's dependency graph.
@@ -8,19 +8,19 @@ integration test, not part of the library's dependency graph.
 ## Layout and interface
 
 - `src/entry.rs` owns `EntryPath`, entry kinds and Unix metadata
-- `src/reader.rs` owns sequential input, completion, and validation
+- `src/reader.rs` owns sequential input and completion
 - `src/guard.rs` caps extension records before the parser buffers them
-- `src/open.rs` owns bounded body and byte meters
+- `src/open.rs` owns the bounded body and the decoded-byte cap
 - `src/writer.rs` owns output format and finalization
-- `src/zstd.rs` owns checked zstd level and worker options
+- `src/limits.rs` owns `ReadLimits`; `src/settings.rs` owns fixed codec settings
 - `src/pack.rs` encodes one tar entry
 - `src/pax.rs` encodes and reads PAX records; `src/xattr.rs` checks and decodes xattrs;
   `src/mtime.rs` parses PAX mtime values
 - `tests/` exercises only the public crate interface; `fuzz/` owns AFL targets
 - `benches/` owns CodSpeed Divan benchmarks
 
-The public interface lives at the crate root: `Reader`, `Writer`, `validate`,
-and their checked entry vocabulary. Add a public item only when those
+The public interface lives at the crate root: `Reader`, `Writer`, and their
+checked entry vocabulary. Add a public item only when those
 operations cannot express a caller's behavior. Keep implementation modules
 private and re-export public items only from `lib.rs`.
 
