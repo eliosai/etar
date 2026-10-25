@@ -69,9 +69,5 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest
-      - run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config libzstd-dev
-      - uses: actions/cache@v4
-        with:
-          path: target/tools/erofs-1.9.4
-          key: erofs-${{ runner.os }}-${{ hashFiles('scripts/erofs-tools.sh') }}
+      - run: just erofs-vendor && test -z "$(git status --porcelain -- erofs)"
       - run: just test-erofs

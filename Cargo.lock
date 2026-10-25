@@ -393,6 +393,7 @@ dependencies = [
  "astral-tokio-tar",
  "async-compression",
  "bytes",
+ "cc",
  "codspeed-divan-compat",
  "dhat",
  "futures",
@@ -400,9 +401,11 @@ dependencies = [
  "pin-project-lite",
  "pretty_assertions",
  "proptest",
+ "rustix",
  "tempfile",
  "thiserror",
  "tokio",
+ "zstd-sys",
 ]
 
 [[package]]

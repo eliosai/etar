@@ -19,10 +19,10 @@ test:
 test-ci:
     cargo nextest run --profile ci -p etar --locked
 
-erofs-tools:
-    bash scripts/erofs-tools.sh
+erofs-vendor:
+    bash scripts/erofs-vendor.sh
 
-test-erofs: erofs-tools
+test-erofs:
     cargo nextest run -p etar --features erofs --test erofs --locked
 
 test-doc:
@@ -36,9 +36,11 @@ docs-open:
 
 msrv:
     cargo +1.96 check -p etar --all-targets --locked
+    cargo +1.96 check -p etar --all-targets --features erofs --locked
 
 package-check:
     cargo package -p etar --locked --allow-dirty
+    cargo package -p etar --locked --allow-dirty --features erofs
     cargo package -p etar --locked --allow-dirty --list
 
 audit:
@@ -47,7 +49,7 @@ audit:
 bench-build mode="simulation":
     RUSTFLAGS="" cargo codspeed build -m {{mode}} -p etar --features erofs
 
-bench-run mode="simulation": erofs-tools
+bench-run mode="simulation":
     RUSTFLAGS="" cargo codspeed run -m {{mode}} -p etar
 
 bench:

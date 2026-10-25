@@ -1,7 +1,6 @@
 use divan::Bencher;
 use etar::{EntryPath, Erofs, Kind, Meta, WriteEntry};
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 
 const SMALL_FILES: &[usize] = &[100, 1_000];
@@ -16,13 +15,6 @@ fn runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("benchmark runtime")
-}
-
-/// The pinned mkfs.erofs from `ETAR_EROFS_BIN` or the `just erofs-tools` prefix
-fn program() -> PathBuf {
-    let dir = std::env::var_os("ETAR_EROFS_BIN").map(PathBuf::from);
-    let default = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/tools/erofs-1.9.4/bin");
-    dir.unwrap_or(default).join("mkfs.erofs")
 }
 
 fn bytes(size: usize, seed: u32) -> Vec<u8> {
@@ -55,9 +47,7 @@ async fn image(erofs: &Erofs, files: &[(EntryPath, Vec<u8>)]) -> u64 {
 fn bench_files(bencher: Bencher, files: Vec<(EntryPath, Vec<u8>)>) {
     let runtime = runtime();
     let scratch = tempfile::tempdir().expect("scratch");
-    let erofs = runtime
-        .block_on(Erofs::new(program(), scratch.path()))
-        .expect("pinned mkfs.erofs: run `just erofs-tools`");
+    let erofs = Erofs::new(scratch.path()).expect("embedded mkfs.erofs");
     let total: usize = files.iter().map(|(_, body)| body.len()).sum();
     bencher
         .counter(divan::counter::BytesCount::new(total))
