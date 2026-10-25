@@ -20,7 +20,10 @@ metadata-record ceiling. `pack` emits one tar entry, while
 `max_xattr_bytes` budget and sub-second modification times.
 `writer` controls format and finalization. `erofs`, behind its feature, feeds
 a `Writer` over mkfs.erofs stdin and owns the child, its stderr tail, and the
-unlinked image.
+unlinked image. `build.rs` compiles the vendored erofs-utils in `erofs/` against
+the zstd that zstd-sys builds, and `erofs` runs the embedded binary from a sealed
+memfd. `scripts/erofs-vendor.sh` regenerates `erofs/upstream` from the pinned
+release and the patches in `erofs/`.
 
 The `object_store` adapter test lives in `tests/`. The AFL target feeds
 bounded input to `Reader`. Divan benchmarks exercise the public reader and

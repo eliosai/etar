@@ -4,7 +4,7 @@
 256 KiB, and 4 MiB, plus tar.zst writing of 32 MiB of text-like bytes. A separate read case
 covers 100 and 1,000 empty files to expose per-entry overhead.
 `benches/erofs.rs` measures EROFS image builds from 100 and 1,000 small files
-and from eight 4 MiB files; it needs `just erofs-tools`. Each body case uses a deterministic
+and from eight 4 MiB files. Each body case uses a deterministic
 high-entropy payload. Fixture generation and runtime construction happen
 outside the measured closure. Read cases drain each body and verify the
 trailer. The writer cases measure allocation for the output `Vec`; use the

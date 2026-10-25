@@ -54,12 +54,11 @@ pub mod pax {
 
 #[cfg(feature = "erofs")]
 pub mod erofs {
-    /// The only mkfs.erofs version an image build accepts
-    pub const VERSION: &str = "1.9.4";
-    /// mkfs.erofs flags: stdin tar, zstd 64 KiB clusters, clear UUID, zero build time, two workers
-    pub const ARGS: [&str; 8] = [
+    /// mkfs.erofs flags: stdin tar, 4 KiB blocks on any host page size, zstd 64 KiB clusters, clear UUID, zero build time, two workers
+    pub const ARGS: [&str; 9] = [
         "--quiet",
         "--tar=f",
+        "-b4096",
         "-zzstd,level=3",
         "-C65536",
         "--workers=2",

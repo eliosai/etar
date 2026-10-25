@@ -1,4 +1,4 @@
-//! EROFS image builds checked by the pinned fsck.erofs extracting them
+//! EROFS image builds checked by the fsck.erofs built beside the embedded mkfs.erofs extracting them
 #![cfg(feature = "erofs")]
 
 use etar::{EntryPath, Erofs, ErofsBuild, Error, Kind, Meta, WriteEntry};
@@ -6,25 +6,11 @@ use std::io::Cursor;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// A pinned erofs-utils binary, from `ETAR_EROFS_BIN` or the `just erofs-tools` prefix
-fn tool(name: &str) -> PathBuf {
-    let dir = std::env::var_os("ETAR_EROFS_BIN").map(PathBuf::from);
-    let default = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/tools/erofs-1.9.4/bin");
-    let path = dir.unwrap_or(default).join(name);
-    assert!(
-        path.exists(),
-        "{} missing: run `just erofs-tools`",
-        path.display()
-    );
-    path
-}
-
-async fn erofs(scratch: &Path) -> Erofs {
-    Erofs::new(tool("mkfs.erofs"), scratch)
-        .await
-        .expect("erofs")
+fn erofs(scratch: &Path) -> Erofs {
+    Erofs::new(scratch).expect("erofs")
 }
 
 fn noise(len: usize, seed: u32) -> Vec<u8> {
@@ -69,7 +55,7 @@ async fn sample(build: &mut ErofsBuild) {
 }
 
 async fn sample_image(scratch: &Path) -> Vec<u8> {
-    let mut build = erofs(scratch).await.build().await.expect("build");
+    let mut build = erofs(scratch).build().await.expect("build");
     sample(&mut build).await;
     let mut image = build.finish().await.expect("finish");
     let mut bytes = Vec::new();
@@ -82,7 +68,7 @@ fn extract(image: &[u8]) -> tempfile::TempDir {
     let path = dir.path().join("image.erofs");
     std::fs::write(&path, image).expect("write image");
     let out = dir.path().join("x");
-    let fsck = Command::new(tool("fsck.erofs"))
+    let fsck = Command::new(env!("ETAR_FSCK_EROFS"))
         .arg(format!("--extract={}", out.display()))
         .arg("--no-preserve-owner")
         .arg(&path)
@@ -146,7 +132,7 @@ async fn the_same_stream_builds_the_same_image() {
 #[tokio::test]
 async fn implied_parents_are_created() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     file(&mut build, "a/b/c", 0o644, b"deep".to_vec()).await;
     let mut image = Vec::new();
     let mut file = build.finish().await.expect("finish");
@@ -161,7 +147,7 @@ async fn implied_parents_are_created() {
 #[tokio::test]
 async fn scratch_holds_no_file_during_or_after_a_build() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     sample(&mut build).await;
     assert_eq!(scratch_files(scratch.path()), 0);
     let image = build.finish().await.expect("finish");
@@ -172,7 +158,7 @@ async fn scratch_holds_no_file_during_or_after_a_build() {
 #[tokio::test]
 async fn dropping_a_build_kills_mkfs_and_leaves_scratch_empty() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let erofs = erofs(scratch.path()).await;
+    let erofs = erofs(scratch.path());
     for _ in 0..8 {
         let mut build = erofs.build().await.expect("build");
         file(&mut build, "half", 0o644, noise(1024 * 1024, 1)).await;
@@ -192,7 +178,7 @@ async fn settled_mkfs(want: usize) -> usize {
     running_mkfs()
 }
 
-/// Live mkfs.erofs children of this test process
+/// Live mkfs.erofs children of this test process, named by their argv[0]
 fn running_mkfs() -> usize {
     let me = std::process::id().to_string();
     let Ok(procs) = std::fs::read_dir("/proc") else {
@@ -200,8 +186,12 @@ fn running_mkfs() -> usize {
     };
     procs
         .flatten()
+        .filter(|p| {
+            std::fs::read(p.path().join("cmdline"))
+                .is_ok_and(|cmd| cmd.starts_with(b"mkfs.erofs\0"))
+        })
         .filter_map(|p| std::fs::read_to_string(p.path().join("stat")).ok())
-        .filter(|stat| stat.contains("(mkfs.erofs)") && !stat.contains(") Z "))
+        .filter(|stat| !stat.contains(") Z "))
         .filter(|stat| stat.split(") ").nth(1).and_then(|s| s.split(' ').nth(1)) == Some(&me))
         .count()
 }
@@ -209,7 +199,7 @@ fn running_mkfs() -> usize {
 #[tokio::test]
 async fn a_truncated_stream_never_yields_an_image() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     file(&mut build, "whole", 0o644, b"kept".to_vec()).await;
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let path = EntryPath::new("short").expect("path");
@@ -221,7 +211,7 @@ async fn a_truncated_stream_never_yields_an_image() {
 #[tokio::test]
 async fn mkfs_fails_on_a_stream_truncated_past_the_pipe_buffer() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     file(&mut build, "whole", 0o644, noise(256 * 1024, 2)).await;
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let path = EntryPath::new("short").expect("path");
@@ -243,7 +233,7 @@ async fn mkfs_fails_on_a_stream_truncated_past_the_pipe_buffer() {
 #[tokio::test]
 async fn a_dropped_append_mid_body_never_yields_an_image() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     let (body, mut sender) = tokio::io::duplex(256 * 1024);
     sender
         .write_all(&noise(128 * 1024, 5))
@@ -262,31 +252,13 @@ async fn a_dropped_append_mid_body_never_yields_an_image() {
     );
 }
 
-/// An executable that reports 1.9.4 and runs `body` for any other invocation
-fn fake(dir: &Path, body: &str) -> PathBuf {
-    fake_version(dir, "1.9.4", body)
-}
-
-/// An executable that reports `version` and runs `body` for any other invocation
-fn fake_version(dir: &Path, version: &str, body: &str) -> PathBuf {
-    let path = dir.join("mkfs.erofs");
-    let script = format!(
-        "#!/bin/sh\n[ \"$1\" = -V ] && echo 'mkfs.erofs (erofs-utils) {version}' && exit 0\n{body}\n"
-    );
-    std::fs::write(&path, script).expect("script");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
-}
-
 #[tokio::test]
 async fn a_failed_mkfs_surfaces_its_status_and_stderr() {
-    let dir = tempfile::tempdir().expect("dir");
-    let program = fake(dir.path(), "echo 'tar: bad header' >&2; exit 3");
-    let erofs = Erofs::new(program, dir.path()).await.expect("erofs");
-    let mut build = erofs.build().await.expect("build");
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     let meta = Meta::new(0o644, 0, 0, 0, Kind::File);
     let body = noise(4 * 1024 * 1024, 3);
-    let path = EntryPath::new("big").expect("path");
+    let path = EntryPath::new("n".repeat(300)).expect("path");
     let entry = WriteEntry::file(path, meta, body.len() as u64, Cursor::new(body)).expect("file");
     let result = match build.append(entry).await {
         Ok(()) => build.finish().await.map(drop),
@@ -295,47 +267,48 @@ async fn a_failed_mkfs_surfaces_its_status_and_stderr() {
     let Err(Error::Erofs { status, stderr }) = result else {
         panic!("{result:?}");
     };
-    assert_eq!(
-        (status.code(), stderr.as_str()),
-        (Some(3), "tar: bad header")
-    );
+    assert_eq!(status.code(), Some(1));
+    assert!(stderr.contains("File name too long"), "{stderr}");
 }
 
 #[tokio::test]
 async fn a_failure_after_the_tar_closes_is_reported_by_finish() {
-    let dir = tempfile::tempdir().expect("dir");
-    let program = fake(dir.path(), "cat >/dev/null; echo 'no space' >&2; exit 1");
-    let mut build = Erofs::new(program, dir.path())
-        .await
-        .expect("erofs")
-        .build()
-        .await
-        .expect("build");
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     file(&mut build, "f", 0o644, b"x".to_vec()).await;
+    let absent = Kind::Hardlink {
+        target: "absent".into(),
+    };
+    meta(&mut build, "h", 0o644, absent).await;
     let result = build.finish().await;
     assert!(
-        matches!(&result, Err(Error::Erofs { stderr, .. }) if stderr == "no space"),
+        matches!(&result, Err(Error::Erofs { stderr, .. }) if stderr.contains("No such file or directory")),
         "{result:?}"
     );
+    assert_eq!(scratch_files(scratch.path()), 0);
+}
+
+/// How long one image of `files` empty files in a single directory takes to build
+async fn flat(scratch: &Path, files: usize) -> Duration {
+    let started = Instant::now();
+    let mut build = erofs(scratch).build().await.expect("build");
+    for n in 0..files {
+        file(&mut build, &format!("d/f{n:07}"), 0o644, Vec::new()).await;
+    }
+    build.finish().await.expect("finish");
+    started.elapsed()
 }
 
 #[tokio::test]
-async fn only_mkfs_erofs_1_9_4_is_accepted() {
-    let dir = tempfile::tempdir().expect("dir");
-    let result = Erofs::new("/bin/echo", dir.path()).await;
-    assert!(matches!(result, Err(Error::ErofsVersion(_))), "{result:?}");
-    let missing = Erofs::new(dir.path().join("absent"), dir.path()).await;
-    assert!(matches!(missing, Err(Error::Io(_))), "{missing:?}");
-    for version in ["1.9.45", "11.9.4", "1.9.4-dirty"] {
-        let dir = tempfile::tempdir().expect("dir");
-        let program = fake_version(dir.path(), version, "exit 0");
-        let result = Erofs::new(program, dir.path()).await;
-        let banner = format!("mkfs.erofs (erofs-utils) {version}");
-        assert!(
-            matches!(&result, Err(Error::ErofsVersion(got)) if *got == banner),
-            "{version}: {result:?}"
-        );
-    }
+async fn one_large_directory_builds_in_linear_time() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let small = flat(scratch.path(), 20_000).await;
+    let large = flat(scratch.path(), 160_000).await;
+    let ratio = large.as_secs_f64() / small.as_secs_f64();
+    assert!(
+        ratio < 24.0,
+        "8x the entries took {ratio:.1}x the time: {small:?} then {large:?}"
+    );
 }
 
 /// Append `meta` under `name`, with a one-byte body when it is a file
@@ -358,7 +331,7 @@ async fn stamped(build: &mut ErofsBuild, name: &str, meta: Meta) {
 #[tokio::test]
 async fn modes_mtimes_and_links_survive_the_image() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut build = erofs(scratch.path()).await.build().await.expect("build");
+    let mut build = erofs(scratch.path()).build().await.expect("build");
     let target = PathBuf::from(format!("{}/{}", "d".repeat(70), "t".repeat(79)));
     let symlink = Kind::Symlink {
         target: target.clone(),

@@ -48,10 +48,6 @@ pub enum Error {
     /// The mtime nanoseconds are one billion or more
     #[error("mtime nanoseconds must be below 1000000000")]
     InvalidMtimeNanos,
-    /// The configured program is not mkfs.erofs 1.9.4; holds its version banner
-    #[cfg(feature = "erofs")]
-    #[error("mkfs.erofs 1.9.4 required, found {0:?}")]
-    ErofsVersion(String),
     /// mkfs.erofs exited unsuccessfully
     #[cfg(feature = "erofs")]
     #[error("mkfs.erofs failed ({status}): {stderr}")]
