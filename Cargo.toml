@@ -9,7 +9,7 @@ edition = "2024"
 authors = ["Joshua Smotritsky", "Mike Smotritsky"]
 repository = "https://github.com/eliosai/etar"
 rust-version = "1.96"
-license = "MIT"
+license = "MIT AND GPL-2.0-only AND Unlicense"
 
 [workspace.dependencies]
 etar = { path = ".", version = "0.1.0" }

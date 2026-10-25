@@ -21,6 +21,11 @@ allow = [
   "Zlib",
 ]
 
+# The vendored erofs-utils in erofs/upstream carries GPL-2.0-only and Unlicense files
+[[licenses.exceptions]]
+crate = "etar"
+allow = ["GPL-2.0-only"]
+
 [bans]
 multiple-versions = "deny"
 
