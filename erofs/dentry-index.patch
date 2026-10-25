@@ -1,0 +1,174 @@
+erofs-utils 1.9.4: look up the names of a directory past 64 entries by hash, so a tar into one large directory builds in linear time
+
+diff -ruN a/include/erofs/inode.h b/include/erofs/inode.h
+--- a/include/erofs/inode.h
++++ b/include/erofs/inode.h
+@@ -38,6 +38,10 @@
+ int erofs_iflush(struct erofs_inode *inode);
+ struct erofs_dentry *erofs_d_alloc(struct erofs_inode *parent,
+ 				   const char *name);
++struct erofs_dentry *erofs_d_index_lookup(struct erofs_inode *dir,
++					  const char *name);
++void erofs_d_index_build(struct erofs_inode *dir, unsigned int count);
++void erofs_d_index_drop(struct erofs_inode *dir);
+ int erofs_allocate_inode_bh_data(struct erofs_inode *inode, erofs_blk_t nblocks,
+ 				 bool in_metazone);
+ bool erofs_dentry_is_wht(struct erofs_sb_info *sbi, struct erofs_dentry *d);
+diff -ruN a/include/erofs/internal.h b/include/erofs/internal.h
+--- a/include/erofs/internal.h
++++ b/include/erofs/internal.h
+@@ -220,6 +220,9 @@
+ 
+ struct erofs_inode {
+ 	struct list_head i_hash, i_subdirs, i_xattrs;
++	/* (mkfs.erofs) open-addressing name index of a large i_subdirs */
++	struct erofs_dentry **i_dindex;
++	unsigned int i_dindex_mask, i_dindex_used;
+ 
+ 	union {
+ 		/* (erofsfuse) runtime flags */
+diff -ruN a/lib/inode.c b/lib/inode.c
+--- a/lib/inode.c
++++ b/lib/inode.c
+@@ -148,6 +148,7 @@
+ 
+ 	list_for_each_entry_safe(d, t, &inode->i_subdirs, d_child)
+ 		free(d);
++	erofs_d_index_drop(inode);
+ 
+ 	free(inode->compressmeta);
+ 	free(inode->eof_tailraw);
+@@ -171,6 +172,65 @@
+ 	return 0;
+ }
+ 
++static unsigned int erofs_d_hash(const char *name)
++{
++	unsigned int h = 2166136261u;
++
++	while (*name)
++		h = (h ^ (unsigned char)*name++) * 16777619u;
++	return h;
++}
++
++static void erofs_d_index_put(struct erofs_inode *dir, struct erofs_dentry *d)
++{
++	unsigned int i = erofs_d_hash(d->name) & dir->i_dindex_mask;
++
++	while (dir->i_dindex[i])
++		i = (i + 1) & dir->i_dindex_mask;
++	dir->i_dindex[i] = d;
++	++dir->i_dindex_used;
++}
++
++void erofs_d_index_drop(struct erofs_inode *dir)
++{
++	free(dir->i_dindex);
++	dir->i_dindex = NULL;
++	dir->i_dindex_mask = dir->i_dindex_used = 0;
++}
++
++/* index the @count dentries of @dir at a load of at most half; on ENOMEM lookups stay linear */
++void erofs_d_index_build(struct erofs_inode *dir, unsigned int count)
++{
++	unsigned int size = 64;
++	struct erofs_dentry *d;
++
++	if (count >= 1U << 30)
++		return;
++	while (size < 2 * count + 2)
++		size <<= 1;
++	erofs_d_index_drop(dir);
++	dir->i_dindex = calloc(size, sizeof(*dir->i_dindex));
++	if (!dir->i_dindex)
++		return;
++	dir->i_dindex_mask = size - 1;
++	list_for_each_entry(d, &dir->i_subdirs, d_child)
++		erofs_d_index_put(dir, d);
++}
++
++struct erofs_dentry *erofs_d_index_lookup(struct erofs_inode *dir,
++					  const char *name)
++{
++	unsigned int i = erofs_d_hash(name) & dir->i_dindex_mask;
++	struct erofs_dentry *d;
++
++	while ((d = dir->i_dindex[i])) {
++		if (!strcmp(d->name, name))
++			return d;
++		i = (i + 1) & dir->i_dindex_mask;
++	}
++	return NULL;
++}
++
+ struct erofs_dentry *erofs_d_alloc(struct erofs_inode *parent,
+ 				   const char *name)
+ {
+@@ -193,6 +253,12 @@
+ 	d->type = EROFS_FT_UNKNOWN;
+ 	d->flags = 0;
+ 	list_add_tail(&d->d_child, &parent->i_subdirs);
++	if (parent->i_dindex) {
++		if (2 * (parent->i_dindex_used + 1) > parent->i_dindex_mask)
++			erofs_d_index_build(parent, parent->i_dindex_used + 1);
++		else
++			erofs_d_index_put(parent, d);
++	}
+ 	return d;
+ }
+ 
+@@ -1912,8 +1978,9 @@
+ 	return false;
+ }
+ 
+-static void erofs_dentry_kill(struct erofs_dentry *d)
++static void erofs_dentry_kill(struct erofs_inode *dir, struct erofs_dentry *d)
+ {
++	erofs_d_index_drop(dir);
+ 	list_del(&d->d_child);
+ 	erofs_d_invalidate(d);
+ 	free(d);
+@@ -1935,7 +2002,7 @@
+ 	list_for_each_entry_safe(d, n, &dir->i_subdirs, d_child) {
+ 		if (is_dot_dotdot(d->name)) {
+ 			DBG_BUGON(1);
+-			erofs_dentry_kill(d);
++			erofs_dentry_kill(dir, d);
+ 			continue;
+ 		}
+ 		i_nlink += (d->type == EROFS_FT_DIR);
+@@ -1959,7 +2026,7 @@
+ 			if (erofs_dentry_is_wht(sbi, d)) {
+ 				erofs_dbg("remove whiteout %s",
+ 					  d->inode->i_srcpath);
+-				erofs_dentry_kill(d);
++				erofs_dentry_kill(dir, d);
+ 				--nr_subdirs;
+ 				continue;
+ 			}
+diff -ruN a/lib/rebuild.c b/lib/rebuild.c
+--- a/lib/rebuild.c
++++ b/lib/rebuild.c
+@@ -75,11 +75,19 @@
+ struct erofs_dentry *erofs_d_lookup(struct erofs_inode *dir, const char *name)
+ {
+ 	struct erofs_dentry *d;
++	unsigned int count = 0;
+ 
+-	list_for_each_entry(d, &dir->i_subdirs, d_child)
++	if (dir->i_dindex)
++		return erofs_d_index_lookup(dir, name);
++	list_for_each_entry(d, &dir->i_subdirs, d_child) {
+ 		if (!strcmp(d->name, name))
+-			return d;
+-	return NULL;
++			break;
++		++count;
++	}
++	/* a directory past 64 entries looks its names up by hash from now on */
++	if (count >= 64)
++		erofs_d_index_build(dir, count);
++	return &d->d_child == &dir->i_subdirs ? NULL : d;
+ }
+ 
+ struct erofs_dentry *erofs_rebuild_get_dentry(struct erofs_inode *pwd,
