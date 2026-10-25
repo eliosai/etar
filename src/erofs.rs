@@ -28,7 +28,7 @@ impl Erofs {
     /// The mkfs.erofs this crate built from its vendored erofs-utils
     const MKFS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkfs.erofs"));
 
-    /// Bind the embedded mkfs.erofs to `scratch`, loading it into this process on first use
+    /// Bind the embedded mkfs.erofs to `scratch`, loading it into this process on first use; builds need `/proc`
     pub fn new(scratch: impl Into<PathBuf>) -> Result<Self, Error> {
         static TOOL: OnceLock<File> = OnceLock::new();
         let tool = match TOOL.get() {
@@ -38,16 +38,19 @@ impl Erofs {
                 TOOL.get_or_init(|| sealed)
             }
         };
-        let fd = tool.as_raw_fd();
-        let program = PathBuf::from(format!("/proc/{}/fd/{fd}", std::process::id()));
+        let program = PathBuf::from(format!("/proc/self/fd/{}", tool.as_raw_fd()));
         let scratch = scratch.into();
         Ok(Self { program, scratch })
     }
 
-    /// A memfd holding mkfs.erofs, sealed and reopened read-only so the kernel executes it
+    /// An executable memfd holding mkfs.erofs, sealed and reopened read-only so the kernel executes it
     fn sealed() -> Result<File, Error> {
         let flags = MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING;
-        let mut file = File::from(memfd_create("mkfs.erofs", flags).map_err(std::io::Error::from)?);
+        let memfd = match memfd_create("mkfs.erofs", flags | MemfdFlags::EXEC) {
+            Err(rustix::io::Errno::INVAL) => memfd_create("mkfs.erofs", flags),
+            made => made,
+        };
+        let mut file = File::from(memfd.map_err(std::io::Error::from)?);
         file.write_all(Self::MKFS)?;
         let seals = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
         fcntl_add_seals(&file, seals).map_err(std::io::Error::from)?;

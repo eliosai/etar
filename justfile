@@ -36,9 +36,11 @@ docs-open:
 
 msrv:
     cargo +1.96 check -p etar --all-targets --locked
+    cargo +1.96 check -p etar --all-targets --features erofs --locked
 
 package-check:
     cargo package -p etar --locked --allow-dirty
+    cargo package -p etar --locked --allow-dirty --features erofs
     cargo package -p etar --locked --allow-dirty --list
 
 audit:

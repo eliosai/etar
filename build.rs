@@ -52,17 +52,37 @@ const LIB: [&str; 42] = [
 /// The tools linked from liberofs, each from its own `main.c`
 const TOOLS: [&str; 2] = ["mkfs", "fsck"];
 
+/// The compiler settings cc reads, which cargo_metadata(false) leaves unwatched
+const COMPILER_ENV: [&str; 6] = [
+    "CC",
+    "CFLAGS",
+    "TARGET_CC",
+    "TARGET_CFLAGS",
+    "HOST_CC",
+    "CRATE_CC_NO_DEFAULTS",
+];
+
 fn main() {
     println!("cargo:rerun-if-changed=erofs");
+    for name in COMPILER_ENV {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
     if env::var_os("CARGO_FEATURE_EROFS").is_none() {
         return;
     }
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
-        panic!("the erofs feature builds mkfs.erofs for Linux only");
+    let target = (
+        env::var("CARGO_CFG_TARGET_OS"),
+        env::var("CARGO_CFG_TARGET_ENV"),
+    );
+    if target.0.as_deref() != Ok("linux") || target.1.as_deref() != Ok("gnu") {
+        panic!(
+            "the erofs feature builds mkfs.erofs for linux-gnu only, the target erofs/config.h describes"
+        );
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    let zstd =
-        PathBuf::from(env::var_os("DEP_ZSTD_ROOT").expect("zstd-sys builds its static zstd"));
+    let zstd = PathBuf::from(env::var_os("DEP_ZSTD_ROOT").expect(
+        "the erofs feature links the static zstd zstd-sys bundles, not a pkg-config or cmake one",
+    ));
     let erofs = Path::new(env!("CARGO_MANIFEST_DIR")).join("erofs");
     let lib = objects(&erofs, &zstd, LIB.iter().map(|file| format!("lib/{file}")));
     for tool in TOOLS {
