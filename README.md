@@ -44,12 +44,15 @@ rules out large `zstd --long` and `--ultra -20` through `-22` archives. `Meta` c
 records. Sub-second mtime travels as a PAX `mtime` record. Character devices,
 block devices, and fifos carry their device numbers.
 
-The `erofs` feature adds `Erofs`, which streams entries as a tar into a pinned
-`mkfs.erofs` 1.9.4 and returns the image as an unlinked scratch file. The image
-uses zstd level 3 in 64 KiB clusters with a clear UUID and a zero build time,
-so one entry stream always builds the same bytes. Entries keep their modes and
-nanosecond mtimes. Dropping a build kills `mkfs.erofs` and leaves no file in
-scratch. `just erofs-tools` builds the pinned binaries into `target/tools`.
+The `erofs` feature adds `Erofs`, which streams entries as a tar into an
+embedded `mkfs.erofs` and returns the image as an unlinked scratch file. The
+crate builds the tool from vendored erofs-utils 1.9.4 with its patches, so a
+directory of any size builds in linear time, and needs no installed binary. The
+image uses 4 KiB blocks and zstd level 3 in 64 KiB clusters with a clear UUID
+and a zero build time, so one entry stream always builds the same bytes on any
+host. Entries keep their modes and nanosecond mtimes. Dropping a build kills
+`mkfs.erofs` and leaves no file in scratch. The vendored erofs-utils is
+GPL-2.0, as `erofs/upstream/COPYING` states.
 
 `EntryPath` rejects absolute and parent components, NUL bytes, and empty
 names. Non-UTF-8 Unix path bytes are preserved. Link targets are returned as

@@ -19,10 +19,10 @@ test:
 test-ci:
     cargo nextest run --profile ci -p etar --locked
 
-erofs-tools:
-    bash scripts/erofs-tools.sh
+erofs-vendor:
+    bash scripts/erofs-vendor.sh
 
-test-erofs: erofs-tools
+test-erofs:
     cargo nextest run -p etar --features erofs --test erofs --locked
 
 test-doc:
@@ -47,7 +47,7 @@ audit:
 bench-build mode="simulation":
     RUSTFLAGS="" cargo codspeed build -m {{mode}} -p etar --features erofs
 
-bench-run mode="simulation": erofs-tools
+bench-run mode="simulation":
     RUSTFLAGS="" cargo codspeed run -m {{mode}} -p etar
 
 bench:
