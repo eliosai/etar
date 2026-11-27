@@ -56,9 +56,10 @@ Production paths return typed errors and never use `unwrap`, `expect` or
 `panic`. Keep functions short, split files by behavior, and keep comments
 specific. Public rustdoc and README claims must match tested behavior.
 
-`main` is the working branch. Do not create another branch. Run the local
-checks before pushing when Josh asks. Never publish manually: the release
-workflow owns versions, tags, crates.io publication, and GitHub releases.
+`main` takes changes only by pull request. Work on a branch, run `just ci`
+before pushing, and rebase-merge once the `gate` check passes. Never publish
+manually: `docs/releasing.md` describes the release pull request, and the
+release workflow owns tags, crates.io publication and GitHub releases.
 
 ## Agent files
 
