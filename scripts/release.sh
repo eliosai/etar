@@ -3,7 +3,7 @@
 # Usage:
 #   scripts/release.sh bump <X.Y.Z>     write the version into the manifest and the lockfile
 #   scripts/release.sh check <branch>   a release pull request names its version and breaks no API that version may not break
-#   scripts/release.sh plan             version=<X.Y.Z> when HEAD carries a version no tag names, else version=
+#   scripts/release.sh plan             version=<X.Y.Z> and commit=<sha that set it> when HEAD carries a version no tag names, else version=
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -36,6 +36,7 @@ bump() {
     old="${old//./\\.}"
     sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$old\"/version = \"$version\"/" "$root/Cargo.toml"
     sed -i -E "s/^(etar = \{ path = \"\.\", version = )\"$old\"/\1\"$version\"/" "$root/Cargo.toml"
+    [ "$(current)" = "$version" ] || { echo "the manifest did not take $version" >&2; exit 1; }
     # only the workspace's own entries move, so no foreign crate re-resolves
     cargo update --manifest-path "$root/Cargo.toml" --workspace --offline
 }
@@ -47,17 +48,21 @@ check() {
     fresh "$version"
     last="$(previous)"
     [ -n "$last" ] || { echo "v$version is the first release: no API to compare"; return 0; }
-    cargo semver-checks --manifest-path "$root/Cargo.toml" -p etar --baseline-rev "$last"
+    cargo semver-checks --manifest-path "$root/Cargo.toml" -p etar --all-features --baseline-rev "$last"
 }
 
 plan() {
-    local version
+    local version commit
     version="$(current)"
     if git -C "$root" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
         echo "version="
     else
         fresh "$version"
         echo "version=$version"
+        # the release publishes and tags the commit which set the version, even on a later rerun
+        commit="$(git -C "$root" log -1 --format=%H -G "^version = \"${version//./\\.}\"" -- Cargo.toml)"
+        [ -n "$commit" ] || { echo "no commit sets $version" >&2; exit 1; }
+        echo "commit=$commit"
     fi
 }
 
