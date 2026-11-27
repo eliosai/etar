@@ -4,6 +4,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # astral-tokio-tar ended maintenance on 2026-11-03 with no successor release; replacing it is its own change
+  { id = "RUSTSEC-2026-0440", reason = "no maintained release exists; etar owns the replacement" },
+  # chrono and humantime reach etar only through the object_store dev-dependency
+  { id = "RUSTSEC-2026-0543", reason = "dev-dependency of object_store only" },
+  { id = "RUSTSEC-2026-0542", reason = "dev-dependency of object_store only" },
+]
 
 [licenses]
 unused-allowed-license = "allow"
