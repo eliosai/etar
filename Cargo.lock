@@ -299,7 +299,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1dd3e854683dd16bb2df9da578fa5f78793f7053fc284e506d9c788dc521a1fb"
 dependencies = [
  "divan-macros",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -789,6 +789,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -918,9 +927,9 @@ dependencies = [
 
 [[package]]
 name = "object_store"
-version = "0.13.2"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "622acbc9100d3c10e2ee15804b0caa40e55c933d5aa53814cd520805b7958a49"
+checksum = "f1796bc93603f78c5760a69f2d58badc9618d22adade0a95385bb2adbae4eb94"
 dependencies = [
  "async-trait",
  "bytes",
@@ -930,7 +939,8 @@ dependencies = [
  "futures-util",
  "http",
  "humantime",
- "itertools",
+ "itertools 0.15.0",
+ "nix",
  "parking_lot",
  "percent-encoding",
  "thiserror",
@@ -940,6 +950,7 @@ dependencies = [
  "walkdir",
  "wasm-bindgen-futures",
  "web-time",
+ "windows-sys",
 ]
 
 [[package]]
