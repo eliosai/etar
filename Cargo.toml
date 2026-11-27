@@ -21,7 +21,7 @@ cc = "1.2"
 divan = { package = "codspeed-divan-compat", version = "5.0.2" }
 dhat = "0.3"
 futures = "0.3"
-object_store = "0.13"
+object_store = "0.14"
 pin-project-lite = "0.2"
 pretty_assertions = "1"
 proptest = "1"
