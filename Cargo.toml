@@ -4,7 +4,7 @@ members = [".", "fuzz"]
 default-members = ["."]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Joshua Smotritsky", "Mike Smotritsky"]
 repository = "https://github.com/eliosai/etar"
@@ -12,7 +12,7 @@ rust-version = "1.96"
 license = "MIT AND GPL-2.0-only AND Unlicense"
 
 [workspace.dependencies]
-etar = { path = ".", version = "0.1.0" }
+etar = { path = ".", version = "0.2.0" }
 afl = "0.18.2"
 astral-tokio-tar = "0.6.2"
 async-compression = { version = "0.4.42", default-features = false, features = ["tokio", "zstd", "zstdmt"] }
