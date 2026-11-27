@@ -56,24 +56,16 @@ bench:
     just bench-build
     just bench-run
 
-semver-check baseline="" release_type="minor":
-    bash scripts/semver-check.sh "{{baseline}}" "{{release_type}}"
-
-release-plan:
-    bash scripts/release.sh --dry-run
-
-release-test:
-    bash tests/release_plan.sh
-
-size:
-    bash scripts/pr-size-gate.sh
+# open a release: bump the version, then commit it on release/v<version> and open its pull request
+release version:
+    bash scripts/release.sh bump "{{ version }}"
 
 ci:
     just check
     just test-ci
     just test-doc
+    just test-erofs
     just doc-check
     just package-check
-    just release-test
     just audit
     just msrv
