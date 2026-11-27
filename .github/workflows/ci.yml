@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: ""
+
+jobs:
+  # the one required check: lint, tests, the vendored erofs-utils, the package, the advisories and the MSRV
+  gate:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: "1.97"
+          components: clippy, rustfmt
+      - run: rustup toolchain install 1.96 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest,cargo-deny,cargo-semver-checks
+      - run: just check
+      - run: just doc-check
+      - run: just test-ci
+      - run: just test-doc
+      - run: just erofs-vendor && git diff --exit-code -- erofs
+      - run: just test-erofs
+      - run: just package-check
+      - run: just audit
+      - run: just msrv
+      # a release pull request names its version and breaks no API that version may not break
+      - if: startsWith(github.head_ref, 'release/v')
+        run: bash scripts/release.sh check "$GITHUB_HEAD_REF"
