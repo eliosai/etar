@@ -14,7 +14,7 @@ license = "MIT AND GPL-2.0-only AND Unlicense"
 [workspace.dependencies]
 etar = { path = ".", version = "0.2.0" }
 afl = "0.18.2"
-astral-tokio-tar = "0.6.2"
+astral-tokio-tar = "0.7.1"
 async-compression = { version = "0.4.42", default-features = false, features = ["tokio", "zstd", "zstdmt"] }
 bytes = "1.11"
 cc = "1.2"
