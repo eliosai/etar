@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   plan:
+    # a manual run from another branch would release that branch's commit, and a v* tag never moves
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
@@ -26,7 +28,9 @@ jobs:
         with:
           fetch-depth: 0
       - id: plan
-        run: bash scripts/release.sh plan | tee -a "$GITHUB_OUTPUT"
+        run: |
+          set -o pipefail
+          bash scripts/release.sh plan | tee -a "$GITHUB_OUTPUT"
 
   # crates.io trusts this workflow file and the crates-io environment, and hands out a short-lived token
   release:
