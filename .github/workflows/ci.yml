@@ -37,11 +37,14 @@ jobs:
       - run: just doc-check
       - run: just test-ci
       - run: just test-doc
-      - run: just erofs-vendor && git diff --exit-code -- erofs
+      - run: just erofs-vendor && test -z "$(git status --porcelain -- erofs)"
       - run: just test-erofs
       - run: just package-check
       - run: just audit
       - run: just msrv
-      # a release pull request names its version and breaks no API that version may not break
-      - if: startsWith(github.head_ref, 'release/v')
-        run: bash scripts/release.sh check "$GITHUB_HEAD_REF"
+      # a pull request carrying a version no tag names is a release: its branch names it and it breaks no API that version may not break
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          plan="$(bash scripts/release.sh plan)"
+          if [ "$plan" != "version=" ]; then bash scripts/release.sh check "$HEAD_REF"; fi
