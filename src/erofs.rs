@@ -28,7 +28,7 @@ impl Erofs {
     /// The mkfs.erofs this crate built from its vendored erofs-utils
     const MKFS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkfs.erofs"));
 
-    /// Bind the embedded mkfs.erofs to `scratch`, loading it into this process on first use; builds need `/proc`
+    /// Bind the embedded mkfs.erofs to `scratch`, loading it into this process on first use; builds need `/proc` and a dumpable process
     pub fn new(scratch: impl Into<PathBuf>) -> Result<Self, Error> {
         static TOOL: OnceLock<File> = OnceLock::new();
         let tool = match TOOL.get() {
