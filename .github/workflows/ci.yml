@@ -18,7 +18,7 @@ env:
 jobs:
   # the one required check: lint, tests, the vendored erofs-utils, the package, the advisories and the MSRV
   gate:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
