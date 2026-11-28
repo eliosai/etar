@@ -18,7 +18,7 @@ jobs:
   plan:
     # a manual run from another branch would release that branch's commit, and a v* tag never moves
     if: github.ref == 'refs/heads/main'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.plan.outputs.version }}
@@ -37,7 +37,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.version != ''
     environment: crates-io
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
